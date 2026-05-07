@@ -1,0 +1,6 @@
+# @package dataset
+name: squad
+split: validation
+max_queries: 1000
+max_documents: null
+seed: 42

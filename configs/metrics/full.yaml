@@ -1,0 +1,26 @@
+# @package metrics
+retrieval_metrics:
+  - nDCG@10
+  - R@5
+  - R@10
+  - R@20
+  - RR
+  - P@1
+  - P@5
+generation_lexical:
+  - em
+  - f1
+  - rouge_l
+use_ragas: true
+ragas_metrics:
+  - faithfulness
+  - answer_relevancy
+  - answer_correctness
+judge_model:
+  kind: openai
+  model_name: gpt-4o
+  temperature: 0.0
+  max_tokens: 1024
+  top_p: 1.0
+bootstrap_n: 1000
+bootstrap_seed: 12345

@@ -1,0 +1,6 @@
+# @package generator
+kind: openai
+model_name: gpt-4o
+temperature: 0.0
+max_tokens: 1024
+top_p: 1.0

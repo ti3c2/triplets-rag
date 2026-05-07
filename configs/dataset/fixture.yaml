@@ -1,0 +1,6 @@
+# @package dataset
+name: fixture
+split: validation
+max_queries: null
+max_documents: null
+seed: 42

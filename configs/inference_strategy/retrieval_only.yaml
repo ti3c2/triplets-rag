@@ -1,0 +1,4 @@
+# @package inference
+strategy: retrieval_only
+prompt_version: v1
+include_fresh_contexts: false
