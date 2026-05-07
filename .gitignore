@@ -1,3 +1,5 @@
+# Project folders
+.ssh
 *.zip
 
 # Python
