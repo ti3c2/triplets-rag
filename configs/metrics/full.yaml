@@ -4,9 +4,11 @@ retrieval_metrics:
   - R@5
   - R@10
   - R@20
-  - RR
   - P@1
   - P@5
+  - P@10
+  - P@20
+  - RR
 generation_lexical:
   - em
   - f1
