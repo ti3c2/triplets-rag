@@ -24,7 +24,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import ExperimentConfig
+from .config import ExperimentConfig, LLMConfig
+from .evaluate import run_ragas_on_experiment, sanitize_judge_tag
 from .experiment import list_experiments, run_experiment
 from .settings import get_settings
 from .utils.io import read_json
@@ -278,6 +279,113 @@ def grid(
     console.print("\n[bold]Grid complete[/bold]")
     for eid, status, _ in results:
         console.print(f"  {status}\t{eid}")
+
+
+def _resolve_exp_dir(experiment_id: str) -> Path:
+    s = get_settings()
+    exp_dir = s.experiments_dir / experiment_id
+    if exp_dir.exists():
+        return exp_dir
+    candidates = sorted(s.experiments_dir.glob(f"*{experiment_id}*"))
+    if not candidates:
+        typer.echo(f"No experiment found matching: {experiment_id}", err=True)
+        raise typer.Exit(2)
+    chosen = candidates[-1]
+    console.print(f"[dim]Resolved -> {chosen.name}[/dim]")
+    return chosen
+
+
+@app.command(name="eval-ragas")
+def eval_ragas_cmd(
+    experiment_id: str = typer.Argument(..., help="Experiment id (or fuzzy substring)"),
+    judge_model: str = typer.Option(
+        "openai:gpt-4o",
+        "--judge-model",
+        "-j",
+        help="<kind>:<model_name>; kind in {openai, anthropic, vllm, local_hf}",
+    ),
+    metrics: str = typer.Option(
+        "faithfulness,answer_relevancy,answer_correctness",
+        "--metrics",
+        "-m",
+        help="Comma-separated RAGAS metric names. "
+        "Supported: faithfulness, answer_relevancy, answer_correctness, "
+        "context_precision, context_recall, nv_accuracy, "
+        "nv_response_groundedness, nv_context_relevance.",
+    ),
+    judge_tag: Optional[str] = typer.Option(
+        None,
+        "--judge-tag",
+        help="Folder label for this run; defaults to the sanitized model name.",
+    ),
+    base_url: Optional[str] = typer.Option(
+        None,
+        "--base-url",
+        help="OpenAI-compatible endpoint for the judge "
+        "(e.g. http://localhost:7114/v1 for a self-hosted vLLM). "
+        "Required when kind=vllm and the host differs from VLLM_BASE_URL.",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        "--api-key",
+        help="API key for the judge endpoint. "
+        "Defaults to VLLM_API_KEY (vllm) or the matching provider env var.",
+    ),
+    temperature: float = typer.Option(0.0, "--temperature"),
+    max_tokens: int = typer.Option(1024, "--max-tokens"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """Run RAGAS on a completed experiment's predictions.
+
+    Results land in `experiments/<id>/metrics/ragas/<tag>/`. Existing metrics
+    files are not modified, so you can compare across judge models.
+    """
+    s = get_settings()
+    setup_logging(s.log_level)
+    exp_dir = _resolve_exp_dir(experiment_id)
+
+    if ":" not in judge_model:
+        typer.echo(
+            f"--judge-model must be '<kind>:<model_name>', got {judge_model!r}",
+            err=True,
+        )
+        raise typer.Exit(2)
+    kind, model_name = judge_model.split(":", 1)
+    if kind not in ("openai", "anthropic", "vllm", "local_hf"):
+        typer.echo(f"Unsupported judge kind: {kind}", err=True)
+        raise typer.Exit(2)
+
+    judge_cfg = LLMConfig(
+        kind=kind,  # type: ignore[arg-type]
+        model_name=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    metric_names = [m.strip() for m in metrics.split(",") if m.strip()]
+    tag = judge_tag or sanitize_judge_tag(model_name)
+
+    endpoint_str = f" @ {base_url}" if base_url else ""
+    console.print(f"[bold]Experiment:[/bold] {exp_dir.name}")
+    console.print(f"[bold]Judge:[/bold] {kind}:{model_name}{endpoint_str} (tag={tag})")
+    console.print(f"[bold]Metrics:[/bold] {metric_names}")
+
+    try:
+        agg, out_dir = run_ragas_on_experiment(
+            exp_dir=exp_dir,
+            judge_cfg=judge_cfg,
+            metric_names=metric_names,
+            judge_tag=tag,
+            judge_base_url=base_url,
+            judge_api_key=api_key,
+            force=force,
+        )
+    except FileExistsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2)
+
+    console.print(f"\n[green]done[/green] -> {out_dir}")
+    console.print("\n[bold]RAGAS aggregate (means):[/bold]")
+    console.print_json(json.dumps(agg, default=str))
 
 
 def main() -> None:

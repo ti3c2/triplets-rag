@@ -23,10 +23,21 @@ from ..config import LLMConfig, MetricsConfig
 from ..settings import get_settings
 
 
-def _build_ragas_judge_llm(judge_cfg: LLMConfig | None) -> Any:
+def _build_ragas_judge_llm(
+    judge_cfg: LLMConfig | None,
+    *,
+    base_url_override: str | None = None,
+    api_key_override: str | None = None,
+) -> Any:
     """Build a langchain-compatible LLM for RAGAS to use as judge.
 
     If judge_cfg is None, RAGAS falls back to its env-default (OpenAI).
+
+    For OpenAI-compatible endpoints (kind in {vllm, local_hf}, or kind=openai
+    when you want to point at a non-OpenAI host), `base_url_override` and
+    `api_key_override` take precedence over the env-derived settings. They're
+    threaded through `compute_ragas_metrics` so the offline rerunner can target
+    a self-hosted vLLM without mutating env vars.
     """
     if judge_cfg is None:
         return None
@@ -39,7 +50,8 @@ def _build_ragas_judge_llm(judge_cfg: LLMConfig | None) -> Any:
         chat = ChatOpenAI(
             model=judge_cfg.model_name,
             temperature=judge_cfg.temperature,
-            api_key=s.openai_api_key,
+            api_key=api_key_override or s.openai_api_key,
+            base_url=base_url_override,
         )
     elif judge_cfg.kind == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -47,14 +59,14 @@ def _build_ragas_judge_llm(judge_cfg: LLMConfig | None) -> Any:
         chat = ChatAnthropic(
             model=judge_cfg.model_name,
             temperature=judge_cfg.temperature,
-            api_key=s.anthropic_api_key,
+            api_key=api_key_override or s.anthropic_api_key,
         )
     elif judge_cfg.kind in ("vllm", "local_hf"):
         chat = ChatOpenAI(
             model=judge_cfg.model_name,
             temperature=judge_cfg.temperature,
-            api_key=s.vllm_api_key,
-            base_url=s.vllm_base_url,
+            api_key=api_key_override or s.vllm_api_key,
+            base_url=base_url_override or s.vllm_base_url,
         )
     else:
         raise ValueError(f"Unsupported judge kind for ragas: {judge_cfg.kind}")
@@ -78,8 +90,15 @@ def _build_ragas_embeddings() -> Any:
 def compute_ragas_metrics(
     predictions: list[dict],
     cfg: MetricsConfig,
+    *,
+    judge_base_url: str | None = None,
+    judge_api_key: str | None = None,
 ) -> tuple[dict[str, float], pd.DataFrame]:
-    """Return (aggregate, per_query_df). Empty if ragas disabled."""
+    """Return (aggregate, per_query_df). Empty if ragas disabled.
+
+    `judge_base_url` / `judge_api_key` override settings for this call only;
+    used by the offline rerunner to target a self-hosted endpoint.
+    """
     if not cfg.use_ragas or not cfg.ragas_metrics:
         return {}, pd.DataFrame()
 
@@ -93,6 +112,11 @@ def compute_ragas_metrics(
             context_recall,
             faithfulness,
         )
+        from ragas.metrics._nv_metrics import (
+            AnswerAccuracy,
+            ContextRelevance,
+            ResponseGroundedness,
+        )
     except Exception as e:
         logger.warning(f"RAGAS unavailable: {e}; skipping LLM-as-judge metrics")
         return {}, pd.DataFrame()
@@ -103,6 +127,10 @@ def compute_ragas_metrics(
         "answer_correctness": answer_correctness,
         "context_precision": context_precision,
         "context_recall": context_recall,
+        # NVIDIA family — instantiated per-call so they pick up the judge LLM.
+        "nv_accuracy": AnswerAccuracy(),
+        "nv_response_groundedness": ResponseGroundedness(),
+        "nv_context_relevance": ContextRelevance(),
     }
     metrics = []
     for name in cfg.ragas_metrics:
@@ -134,7 +162,11 @@ def compute_ragas_metrics(
 
     ds = Dataset.from_list(rows)
 
-    judge_llm = _build_ragas_judge_llm(cfg.judge_model)
+    judge_llm = _build_ragas_judge_llm(
+        cfg.judge_model,
+        base_url_override=judge_base_url,
+        api_key_override=judge_api_key,
+    )
     embeddings = _build_ragas_embeddings()
 
     logger.info(f"Running RAGAS with metrics: {[m.name for m in metrics]}")
