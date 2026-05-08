@@ -1,0 +1,40 @@
+# @package _global_
+defaults:
+  - /dataset: squad_dev_1k
+  - /chunking: sliding_512_64
+  - /generator: gpt4o_mini
+  - /embedder: bge_small
+  - /indexer: faiss_flat_triplets
+  - /retriever: triplet_top_2
+  - /student: gpt4o_mini
+  - /inference_strategy: qa_demo
+  - /metrics: lexical_only
+  - _self_
+
+experiment_name: squad_qa_demo_pilot
+seed: 42
+
+# qa_demo strips contexts from demos: 2 (Q,A) demos, no per-demo contexts.
+# We keep total_context_items==10 only because triplet_plus_fresh-style fresh
+# contexts are appended (qa_demo.yaml sets include_fresh_contexts: true), so
+# the student still sees 10 fresh chunks for the test query.
+budget:
+  total_context_items: 10
+  num_triplets: 2
+  per_triplet_contexts: 0
+  matching_mode: item
+
+preprocessing:
+  num_questions_per_chunk: 5
+  question_prompt: complex
+  answer_prompt: rag_default
+  max_questions_total: null
+  dedupe_questions: true
+  dedupe_threshold: 0.95
+
+filtering:
+  enabled: false
+  faithfulness_threshold: 0.7
+  judge_model: null
+
+notes: "RQ4 ablation — demos as (Q,A) pairs without per-demo contexts; fresh contexts kept for fair budget"
