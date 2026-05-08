@@ -261,8 +261,10 @@ class ExperimentConfig(_Frozen):
 
     @property
     def experiment_id(self) -> str:
-        # Human-readable + unique
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        # Derive the timestamp from `created_at` (frozen at construction) so the
+        # ID is stable across phases — calling datetime.utcnow() here would give
+        # each phase a different exp_dir.
+        ts = datetime.fromisoformat(self.created_at.rstrip("Z")).strftime("%Y%m%d_%H%M%S")
         slug = self.experiment_name.replace("/", "_").replace(" ", "_")
         return f"{ts}_{self.experiment_hash}_{slug}"
 
