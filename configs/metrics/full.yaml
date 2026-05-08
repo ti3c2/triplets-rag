@@ -1,6 +1,7 @@
 # @package metrics
 retrieval_metrics:
   - nDCG@10
+  - RR
   - R@5
   - R@10
   - R@20
@@ -8,7 +9,6 @@ retrieval_metrics:
   - P@5
   - P@10
   - P@20
-  - RR
 generation_lexical:
   - em
   - f1
