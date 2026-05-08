@@ -12,6 +12,13 @@ import pandas as pd
 
 def write_parquet(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    # JSON-serialize dict-valued columns. pyarrow infers an empty `struct<>` for
+    # uniformly-empty dicts (e.g. `metadata={}` across all rows), which Parquet
+    # cannot encode. Strings are dtype-stable and round-trip through Parquet.
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype == object and df[col].map(lambda v: isinstance(v, dict)).any():
+            df[col] = df[col].map(lambda v: json.dumps(v) if isinstance(v, dict) else v)
     df.to_parquet(path, index=False)
 
 
