@@ -80,7 +80,7 @@ class EmbedderClient:
         else:
             arr = self._embed_openai(texts)
 
-        logger.debug(f"Embedded {len(texts)} texts in {time.time()-t0:.1f}s, dim={arr.shape[1]}")
+        logger.debug(f"Embedded {len(texts)} texts in {time.time() - t0:.1f}s, dim={arr.shape[1]}")
         return arr
 
     @retry(stop=stop_after_attempt(6), wait=wait_exponential(multiplier=2, min=2, max=60))

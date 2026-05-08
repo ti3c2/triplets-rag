@@ -136,7 +136,7 @@ class LLMClient:
             resp = completion(**kwargs)
             content = resp["choices"][0]["message"]["content"] or ""
             elapsed = time.time() - t0
-            logger.debug(f"chat[{self._model_str}] {elapsed*1000:.0f}ms")
+            logger.debug(f"chat[{self._model_str}] {elapsed * 1000:.0f}ms")
             return content
 
         try:

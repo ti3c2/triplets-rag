@@ -271,9 +271,7 @@ def phase_run_inference(cfg: ExperimentConfig, paths: _PathSet, force: bool) -> 
     triplets = read_parquet(paths.triplets_path) if paths.triplets_path.exists() else None
     bundle = load_bundle(paths.index_dir)
     fresh_bundle = (
-        load_bundle(paths.chunk_only_index_dir)
-        if cfg.inference.include_fresh_contexts
-        else None
+        load_bundle(paths.chunk_only_index_dir) if cfg.inference.include_fresh_contexts else None
     )
 
     lifecycle_log = paths.exp_dir / "logs" / "model_lifecycle.log"

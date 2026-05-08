@@ -131,7 +131,9 @@ class InferenceStrategy(str, Enum):
 class InferenceConfig(_Frozen):
     strategy: InferenceStrategy = InferenceStrategy.VANILLA_RAG
     prompt_version: str = "v1"
-    include_fresh_contexts: bool = False  # for triplet_rag: also append test query's retrieved chunks
+    include_fresh_contexts: bool = (
+        False  # for triplet_rag: also append test query's retrieved chunks
+    )
 
 
 # ---------- Budget ----------
@@ -177,7 +179,15 @@ class PreprocessingConfig(_Frozen):
 
 class MetricsConfig(_Frozen):
     retrieval_metrics: list[str] = Field(
-        default_factory=lambda: ["nDCG@10", "Recall@5", "Recall@10", "Recall@20", "RR", "P@1", "P@5"]
+        default_factory=lambda: [
+            "nDCG@10",
+            "Recall@5",
+            "Recall@10",
+            "Recall@20",
+            "RR",
+            "P@1",
+            "P@5",
+        ]
     )
     generation_lexical: list[str] = Field(default_factory=lambda: ["em", "f1", "rouge_l"])
     use_ragas: bool = True

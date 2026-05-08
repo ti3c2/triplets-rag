@@ -67,7 +67,9 @@ def _load_config(config: str, overrides: list[str] | None = None) -> ExperimentC
 
 @app.command()
 def run(
-    config: str = typer.Option(..., "--config", "-c", help="Config name, e.g. experiment/fixture_smoke"),
+    config: str = typer.Option(
+        ..., "--config", "-c", help="Config name, e.g. experiment/fixture_smoke"
+    ),
     override: list[str] = typer.Option(
         [],
         "--override",

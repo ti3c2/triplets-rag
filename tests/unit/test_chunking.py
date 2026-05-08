@@ -12,7 +12,9 @@ def _corpus_one_doc(text: str) -> pd.DataFrame:
 
 def test_sliding_window_basic():
     text = "a" * 1000
-    cfg = ChunkingConfig(strategy="sliding_window", chunk_size=100, chunk_overlap=20, min_chunk_chars=10)
+    cfg = ChunkingConfig(
+        strategy="sliding_window", chunk_size=100, chunk_overlap=20, min_chunk_chars=10
+    )
     chunks = chunk_corpus(_corpus_one_doc(text), cfg)
     assert len(chunks) > 0
     # All chunks should be at most chunk_size
@@ -25,7 +27,9 @@ def test_sliding_window_basic():
 
 def test_sliding_window_min_chars():
     text = "a" * 50
-    cfg = ChunkingConfig(strategy="sliding_window", chunk_size=100, chunk_overlap=10, min_chunk_chars=200)
+    cfg = ChunkingConfig(
+        strategy="sliding_window", chunk_size=100, chunk_overlap=10, min_chunk_chars=200
+    )
     chunks = chunk_corpus(_corpus_one_doc(text), cfg)
     # Below min_chunk_chars threshold => no chunks
     assert len(chunks) == 0

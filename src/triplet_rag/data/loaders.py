@@ -93,9 +93,7 @@ class DatasetLoader(ABC):
                 "config": self.cfg.model_dump(),
             },
         )
-        logger.info(
-            f"[dataset:{self.cfg.name}] wrote {len(corpus)} docs, {len(queries)} queries"
-        )
+        logger.info(f"[dataset:{self.cfg.name}] wrote {len(corpus)} docs, {len(queries)} queries")
 
 
 class SquadLoader(DatasetLoader):
@@ -185,7 +183,7 @@ class NaturalQuestionsLoader(DatasetLoader):
             qid = f"nq-{i}"
             answers = ex["answer"]
             doc_id = f"nq-doc-{i}"
-            doc_text = (answers[0] if answers else "")
+            doc_text = answers[0] if answers else ""
             corpus_records.append(
                 {
                     "doc_id": doc_id,
@@ -254,7 +252,12 @@ class MultiHopRagLoader(DatasetLoader):
             title = doc.get("title", f"doc-{i}")
             doc_id = doc.get("url") or f"mhr-doc-{i}"
             corpus_records.append(
-                {"doc_id": doc_id, "title": title, "text": text, "metadata": {"published": doc.get("published_at", "")}}
+                {
+                    "doc_id": doc_id,
+                    "title": title,
+                    "text": text,
+                    "metadata": {"published": doc.get("published_at", "")},
+                }
             )
 
         query_records = []

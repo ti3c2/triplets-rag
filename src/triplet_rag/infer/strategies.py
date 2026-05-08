@@ -65,7 +65,9 @@ def _build_triplet_prompt(
     budget: BudgetConfig,
     fresh_contexts: list[str] | None,
 ) -> tuple[str, list[_TripletForPrompt]]:
-    triplets = _flatten_chunks_from_triplets(items, budget.num_triplets, budget.per_triplet_contexts)
+    triplets = _flatten_chunks_from_triplets(
+        items, budget.num_triplets, budget.per_triplet_contexts
+    )
     prompt = render(
         infer_key("triplet_rag"),
         question=query,
@@ -83,13 +85,13 @@ def _build_qa_demo_prompt(
     budget: BudgetConfig,
     fresh_contexts: list[str] | None,
 ) -> str:
-    triplets = _flatten_chunks_from_triplets(items, budget.num_triplets, budget.per_triplet_contexts)
+    triplets = _flatten_chunks_from_triplets(
+        items, budget.num_triplets, budget.per_triplet_contexts
+    )
     return render(
         infer_key("qa_demo_rag"),
         question=query,
-        triplets=[
-            {"question": t.question, "answer": t.answer} for t in triplets
-        ],
+        triplets=[{"question": t.question, "answer": t.answer} for t in triplets],
         fresh_contexts=fresh_contexts or [],
     )
 
@@ -109,9 +111,7 @@ def run_inference_for_query(
     items = retrieval.items
     fresh_contexts: list[str] | None = None
     if inference_cfg.include_fresh_contexts and fresh_retrieval is not None:
-        fresh_contexts = [
-            it.text for it in fresh_retrieval.items[: budget.total_context_items]
-        ]
+        fresh_contexts = [it.text for it in fresh_retrieval.items[: budget.total_context_items]]
 
     triplet_ids: list[str] = []
     if inference_cfg.strategy == InferenceStrategy.RETRIEVAL_ONLY:
@@ -162,7 +162,9 @@ def run_inference_for_query(
             # For metrics, use the union of chunk_ids
             for cid in it.chunk_ids:
                 retrieved_ids.append(cid)
-                retrieved_texts.append(it.chunk_texts[it.chunk_ids.index(cid)] if cid in it.chunk_ids else "")
+                retrieved_texts.append(
+                    it.chunk_texts[it.chunk_ids.index(cid)] if cid in it.chunk_ids else ""
+                )
         elif it.item_type == "qa_pair":
             retrieved_ids.append(it.item_id)
             retrieved_texts.append(it.text)

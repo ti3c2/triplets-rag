@@ -119,7 +119,11 @@ def retrieve_dense(
                     )
                 )
             elif it_type == "triplet":
-                cids = list(row["chunk_ids"]) if isinstance(row["chunk_ids"], (list, np.ndarray)) else []
+                cids = (
+                    list(row["chunk_ids"])
+                    if isinstance(row["chunk_ids"], (list, np.ndarray))
+                    else []
+                )
                 items.append(
                     RetrievedItem(
                         item_id=row["item_id"],

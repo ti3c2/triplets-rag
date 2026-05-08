@@ -51,9 +51,7 @@ def test_doc_id_with_double_colon_passes_through():
         }
     ]
     run = list(
-        build_run_from_predictions(
-            preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids
-        )
+        build_run_from_predictions(preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids)
     )
     doc_ids = [r.doc_id for r in run]
     assert doc_ids == ["Super_Bowl_50::6b0af9df", "Super_Bowl_50::f1b96eb2"]
@@ -75,9 +73,7 @@ def test_chunk_id_resolves_to_doc_id():
         }
     ]
     run = list(
-        build_run_from_predictions(
-            preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids
-        )
+        build_run_from_predictions(preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids)
     )
     doc_ids = [r.doc_id for r in run]
     assert doc_ids == ["Super_Bowl_50::6b0af9df", "d1"]
@@ -117,9 +113,7 @@ def test_dedupes_within_query():
         }
     ]
     run = list(
-        build_run_from_predictions(
-            preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids
-        )
+        build_run_from_predictions(preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids)
     )
     doc_ids = [r.doc_id for r in run]
     assert doc_ids == ["Super_Bowl_50::6b0af9df", "Super_Bowl_50::f1b96eb2"]
@@ -163,9 +157,7 @@ def test_unknown_id_passes_through_without_crash():
     valid_doc_ids = set(chunks["doc_id"].astype(str).unique().tolist())
     preds = [{"query_id": "q1", "retrieved_ids": ["nonexistent_id"]}]
     run = list(
-        build_run_from_predictions(
-            preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids
-        )
+        build_run_from_predictions(preds, chunk_to_doc=chunk_to_doc, valid_doc_ids=valid_doc_ids)
     )
     assert len(run) == 1
     assert run[0].doc_id == "nonexistent_id"

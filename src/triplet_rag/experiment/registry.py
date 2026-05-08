@@ -60,9 +60,7 @@ def register_experiment(
     logger.info(f"Registered experiment {experiment_id} ({status})")
 
 
-def list_experiments(
-    storage_dir: Path, filters: dict[str, str] | None = None
-) -> pd.DataFrame:
+def list_experiments(storage_dir: Path, filters: dict[str, str] | None = None) -> pd.DataFrame:
     p = _registry_path(storage_dir)
     if not p.exists():
         return pd.DataFrame()

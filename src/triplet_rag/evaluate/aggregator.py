@@ -16,7 +16,9 @@ from loguru import logger
 from ..utils.io import write_json, write_parquet
 
 
-def _bootstrap_ci(values: np.ndarray, n_boot: int, seed: int, alpha: float = 0.05) -> tuple[float, float]:
+def _bootstrap_ci(
+    values: np.ndarray, n_boot: int, seed: int, alpha: float = 0.05
+) -> tuple[float, float]:
     rng = np.random.default_rng(seed)
     n = len(values)
     if n == 0:
@@ -81,4 +83,4 @@ def aggregate_and_persist(
         }
 
     write_json(agg, out_dir / "aggregate.json")
-    logger.info(f"Wrote {len(agg)} aggregate metrics to {out_dir/'aggregate.json'}")
+    logger.info(f"Wrote {len(agg)} aggregate metrics to {out_dir / 'aggregate.json'}")

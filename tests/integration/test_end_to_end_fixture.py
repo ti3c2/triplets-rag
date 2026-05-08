@@ -53,7 +53,9 @@ def _vanilla_cfg(name: str = "fixture_vanilla") -> ExperimentConfig:
     )
 
 
-def _triplet_cfg(name: str = "fixture_triplet", mode: TripletRetrievalMode = TripletRetrievalMode.Q2Q) -> ExperimentConfig:
+def _triplet_cfg(
+    name: str = "fixture_triplet", mode: TripletRetrievalMode = TripletRetrievalMode.Q2Q
+) -> ExperimentConfig:
     return ExperimentConfig(
         experiment_name=name,
         seed=42,
@@ -161,9 +163,7 @@ def test_artifacts_are_shared_across_experiments(stub_llm_chat, stub_embedder, _
     cfg_b_dict["student"] = LLMConfig(
         kind="openai", model_name="gpt-4o", temperature=0.0
     ).model_dump()
-    cfg_b_dict["inference"] = InferenceConfig(
-        strategy=InferenceStrategy.QA_DEMO_RAG
-    ).model_dump()
+    cfg_b_dict["inference"] = InferenceConfig(strategy=InferenceStrategy.QA_DEMO_RAG).model_dump()
     cfg_b2 = ExperimentConfig(**cfg_b_dict)
     assert cfg_a.preprocessing_hash == cfg_b2.preprocessing_hash
     assert cfg_a.experiment_hash != cfg_b2.experiment_hash
