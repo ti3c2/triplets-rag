@@ -126,6 +126,9 @@ class EmbedderClient:
                 api_base=s.embedder_base_url,
                 api_key=s.embedder_api_key,
                 timeout=s.llm_request_timeout,
+                # Strict embedding servers (e.g. some OpenAI-compatible shims) reject
+                # encoding_format=None; pass an explicit literal so validation passes.
+                encoding_format="float",
             )
             for d in resp["data"]:
                 outs.append(d["embedding"])
