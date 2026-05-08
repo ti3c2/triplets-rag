@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     vllm_base_url: str = Field(default="http://localhost:8000/v1", alias="VLLM_BASE_URL")
     vllm_api_key: str = Field(default="EMPTY", alias="VLLM_API_KEY")
 
+    # --- Local OpenAI-compatible embeddings server (TEI, infinity, jina, ...) ---
+    embedder_base_url: str | None = Field(default=None, alias="EMBEDDER_BASE_URL")
+    embedder_api_key: str = Field(default="EMPTY", alias="EMBEDDER_API_KEY")
+
     # --- Storage ---
     storage_dir: Path = Field(default=Path("./storage"), alias="TRIPLET_RAG_STORAGE_DIR")
 

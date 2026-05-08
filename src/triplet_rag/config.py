@@ -78,7 +78,7 @@ class LLMConfig(_Frozen):
 
 
 class EmbedderConfig(_Frozen):
-    kind: Literal["sentence_transformers", "openai_embed"]
+    kind: Literal["sentence_transformers", "openai_embed", "openai_compatible"]
     model_name: str
     batch_size: int = 64
     normalize: bool = True

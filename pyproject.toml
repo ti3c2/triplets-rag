@@ -44,9 +44,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional local-vLLM extra. faiss-gpu was dropped — the upstream PyPI package
+# was abandoned at 1.7.2 and `faiss-gpu>=1.8` doesn't exist; faiss-cpu (in base
+# deps) is more than enough at this scale. vLLM is Linux-only, hence the marker.
 gpu = [
-    "vllm>=0.5.0",
-    "faiss-gpu>=1.8",
+    "vllm>=0.5.0 ; sys_platform == 'linux'",
 ]
 dev = [
     "pytest>=8.0",

@@ -1,3 +1,4 @@
+# @package _global_
 defaults:
   - /dataset: squad_dev_1k
   - /chunking: sliding_512_64

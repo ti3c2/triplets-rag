@@ -1,17 +1,17 @@
 # @package _global_
 defaults:
   - /dataset: squad_dev_1k
-  - /chunking: sliding_512_64
-  - /generator: gpt4o_mini
-  - /embedder: bge_small
+  - /chunking: whole_doc_8192
+  - /generator: qwen_2_5_7b_local
+  - /embedder: jina_v3_local
   - /indexer: faiss_flat_triplets
   - /retriever: triplet_top_2
-  - /student: gpt4o_mini
+  - /student: qwen_2_5_7b_local
   - /inference_strategy: triplet
-  - /metrics: full
+  - /metrics: lexical_only
   - _self_
 
-experiment_name: squad_triplet_full
+experiment_name: squad_qwen7b_triplet
 seed: 42
 
 budget:
@@ -29,8 +29,8 @@ preprocessing:
   dedupe_threshold: 0.95
 
 filtering:
-  enabled: true
+  enabled: false
   faithfulness_threshold: 0.7
   judge_model: null
 
-notes: "Full pipeline: triplet rag + RAGAS judge + filtering"
+notes: "SQuAD-1k, Qwen2.5-7B (local vLLM) teacher+student, jina-embeddings-v3 (local), whole-doc chunks (8192), triplet RAG @ 2x5 budget"

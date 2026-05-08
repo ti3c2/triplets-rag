@@ -1,3 +1,4 @@
+# @package _global_
 defaults:
   - /dataset: fixture
   - /chunking: small_200_30

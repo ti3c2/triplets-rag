@@ -42,6 +42,16 @@ class EmbedderClient:
                     "text-embedding-ada-002": 1536,
                 }
                 self._dim = defaults.get(self.cfg.model_name, 1536)
+        elif self.cfg.kind == "openai_compatible":
+            self._model = "remote"
+            if not self.settings.embedder_base_url:
+                raise ValueError(
+                    "openai_compatible embedder requires EMBEDDER_BASE_URL to be set in .env"
+                )
+            if self._dim is None:
+                # Probe the server with a dummy input to learn the dimension.
+                arr = self._embed_openai_compat(["__dim_probe__"])
+                self._dim = int(arr.shape[1])
         else:
             raise ValueError(f"Unknown embedder kind: {self.cfg.kind}")
 
@@ -65,6 +75,8 @@ class EmbedderClient:
                 convert_to_numpy=True,
                 show_progress_bar=False,
             ).astype(np.float32)
+        elif self.cfg.kind == "openai_compatible":
+            arr = self._embed_openai_compat(texts)
         else:
             arr = self._embed_openai(texts)
 
@@ -84,6 +96,35 @@ class EmbedderClient:
                 model=self.cfg.model_name,
                 input=chunk,
                 api_key=s.openai_api_key,
+                timeout=s.llm_request_timeout,
+            )
+            for d in resp["data"]:
+                outs.append(d["embedding"])
+        arr = np.array(outs, dtype=np.float32)
+        if self.cfg.normalize:
+            norms = np.linalg.norm(arr, axis=1, keepdims=True) + 1e-12
+            arr = arr / norms
+        return arr
+
+    @retry(stop=stop_after_attempt(6), wait=wait_exponential(multiplier=2, min=2, max=60))
+    def _embed_openai_compat(self, texts: list[str]) -> np.ndarray:
+        """OpenAI-compatible embeddings server (TEI, infinity, jina, vllm-embed, ...)."""
+        from litellm import embedding
+
+        s = self.settings
+        # litellm needs the "openai/" prefix to route a custom endpoint via the openai client.
+        model_str = self.cfg.model_name
+        if not model_str.startswith("openai/"):
+            model_str = f"openai/{model_str}"
+        outs: list[list[float]] = []
+        bs = self.cfg.batch_size
+        for i in range(0, len(texts), bs):
+            chunk = texts[i : i + bs]
+            resp = embedding(
+                model=model_str,
+                input=chunk,
+                api_base=s.embedder_base_url,
+                api_key=s.embedder_api_key,
                 timeout=s.llm_request_timeout,
             )
             for d in resp["data"]:

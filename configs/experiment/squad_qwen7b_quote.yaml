@@ -1,17 +1,17 @@
 # @package _global_
 defaults:
   - /dataset: squad_dev_1k
-  - /chunking: sliding_512_64
-  - /generator: gpt4o_mini
-  - /embedder: bge_small
+  - /chunking: whole_doc_8192
+  - /generator: qwen_2_5_7b_local
+  - /embedder: jina_v3_local
   - /indexer: faiss_flat_quote
   - /retriever: dense_top_k
-  - /student: gpt4o_mini
+  - /student: qwen_2_5_7b_local
   - /inference_strategy: vanilla
   - /metrics: lexical_only
   - _self_
 
-experiment_name: squad_quote_pilot
+experiment_name: squad_qwen7b_quote
 seed: 42
 
 budget:
@@ -31,4 +31,4 @@ preprocessing:
 filtering:
   enabled: false
 
-notes: "QuOTE-style: chunks_and_questions index, vanilla rag inference"
+notes: "SQuAD-1k, Qwen2.5-7B (local vLLM), jina-embeddings-v3 (local), whole-doc chunks (8192), QuOTE-style index (chunks_and_questions) + vanilla inference"

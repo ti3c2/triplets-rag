@@ -1,0 +1,8 @@
+# @package embedder
+# OpenAI-compatible embeddings server (e.g. TEI / infinity / jina) you
+# already have running locally. URL is read from EMBEDDER_BASE_URL in .env.
+kind: openai_compatible
+model_name: jinaai/jina-embeddings-v3
+batch_size: 64
+normalize: true
+dim: 1024

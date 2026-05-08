@@ -1,0 +1,7 @@
+# @package student
+# Externally-managed vLLM server (VLLM_BASE_URL in .env).
+kind: vllm
+model_name: Qwen/Qwen2.5-7B-Instruct
+temperature: 0.0
+max_tokens: 256
+top_p: 1.0
