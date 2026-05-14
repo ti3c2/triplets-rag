@@ -22,6 +22,7 @@ uv.lock
 .env.local
 
 # Storage / artifacts
+storage
 storage/raw/*
 storage/artifacts/*
 storage/indices/*
