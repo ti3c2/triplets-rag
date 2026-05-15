@@ -14,6 +14,7 @@ gap on faithfulness, free-form answers, and demo leakage.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -21,6 +22,27 @@ from loguru import logger
 
 from ..config import LLMConfig, MetricsConfig
 from ..settings import get_settings
+from ..utils.io import write_jsonl
+
+# Metrics that consume the `contexts` field. Splitting them off lets the
+# offline rerunner replicate just these per retrieval-k while running the
+# rest exactly once.
+CONTEXT_DEPENDENT_METRICS: frozenset[str] = frozenset(
+    {
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+        "nv_response_groundedness",
+        "nv_context_relevance",
+    }
+)
+CONTEXT_FREE_METRICS: frozenset[str] = frozenset(
+    {
+        "answer_relevancy",
+        "answer_correctness",
+        "nv_accuracy",
+    }
+)
 
 
 def _build_ragas_judge_llm(
@@ -93,11 +115,21 @@ def compute_ragas_metrics(
     *,
     judge_base_url: str | None = None,
     judge_api_key: str | None = None,
+    concurrency: int | None = None,
+    timeout: int | None = None,
+    debug: bool = False,
+    dump_path: Path | None = None,
 ) -> tuple[dict[str, float], pd.DataFrame]:
     """Return (aggregate, per_query_df). Empty if ragas disabled.
 
     `judge_base_url` / `judge_api_key` override settings for this call only;
     used by the offline rerunner to target a self-hosted endpoint.
+
+    `concurrency` / `timeout` are wired into a ragas `RunConfig` when set.
+    `debug=True` enables `langchain_core.globals.set_debug(True)` so the judge
+    prompts are printed (we don't use `set_verbose` because RAGAS bypasses the
+    Chain layer). `dump_path`, when set, writes the dataset rows actually sent
+    to ragas as JSONL — handy for inspecting per-k truncation.
     """
     if not cfg.use_ragas or not cfg.ragas_metrics:
         return {}, pd.DataFrame()
@@ -117,6 +149,7 @@ def compute_ragas_metrics(
             ContextRelevance,
             ResponseGroundedness,
         )
+        from ragas.run_config import RunConfig
     except Exception as e:
         logger.warning(f"RAGAS unavailable: {e}; skipping LLM-as-judge metrics")
         return {}, pd.DataFrame()
@@ -160,6 +193,20 @@ def compute_ragas_metrics(
     if not rows:
         return {}, pd.DataFrame()
 
+    if dump_path is not None:
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        write_jsonl(rows, dump_path)
+        logger.info(f"Wrote RAGAS input rows to {dump_path}")
+
+    if debug:
+        try:
+            from langchain_core.globals import set_debug
+
+            set_debug(True)
+            logger.info("langchain_core debug enabled — judge prompts will be printed")
+        except Exception as e:
+            logger.warning(f"Could not enable langchain debug mode: {e}")
+
     ds = Dataset.from_list(rows)
 
     judge_llm = _build_ragas_judge_llm(
@@ -169,15 +216,30 @@ def compute_ragas_metrics(
     )
     embeddings = _build_ragas_embeddings()
 
+    run_config: Any = None
+    if concurrency is not None or timeout is not None:
+        # Use ragas defaults for fields the caller didn't override.
+        defaults = RunConfig()
+        run_config = RunConfig(
+            timeout=timeout if timeout is not None else defaults.timeout,
+            max_workers=concurrency if concurrency is not None else defaults.max_workers,
+        )
+        logger.info(
+            f"RAGAS RunConfig: max_workers={run_config.max_workers}, "
+            f"timeout={run_config.timeout}s"
+        )
+
     logger.info(f"Running RAGAS with metrics: {[m.name for m in metrics]}")
     try:
-        result = evaluate(
-            ds,
-            metrics=metrics,
-            llm=judge_llm,
-            embeddings=embeddings,
-            raise_exceptions=False,
-        )
+        evaluate_kwargs: dict[str, Any] = {
+            "metrics": metrics,
+            "llm": judge_llm,
+            "embeddings": embeddings,
+            "raise_exceptions": False,
+        }
+        if run_config is not None:
+            evaluate_kwargs["run_config"] = run_config
+        result = evaluate(ds, **evaluate_kwargs)
     except Exception as e:
         logger.error(f"RAGAS evaluate failed: {e}")
         return {}, pd.DataFrame()

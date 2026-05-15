@@ -24,11 +24,15 @@ storage/experiments/<experiment_id>/metrics/
 ├── per_query.parquet          # original (lexical + retrieval)
 ├── aggregate.json             # original
 └── ragas/
-    ├── runs.json              # index: tag -> {judge_model, base_url, metrics, ran_at}
+    ├── runs.json              # index: tag -> {judge_model, base_url, metrics, ks, ran_at}
     ├── <judge_tag_1>/
     │   ├── per_query.parquet  # this judge's per-query scores
     │   ├── aggregate.json     # this judge's means + bootstrap CIs
-    │   └── judge.json         # full judge config + endpoint + n_queries
+    │   ├── judge.json         # full judge config + endpoint + ks + run-config + n_queries
+    │   └── inputs/            # (only when --dump-inputs is passed)
+    │       ├── context_free.jsonl
+    │       ├── k5.jsonl
+    │       └── k10.jsonl
     └── <judge_tag_2>/
         └── ...
 ```
@@ -55,6 +59,25 @@ Pass any subset to `--metrics`, comma-separated.
 For SQuAD: `faithfulness` and `nv_response_groundedness` are the load-bearing
 ones. `answer_correctness` / `nv_accuracy` add cost without much signal beyond
 EM/F1.
+
+### Context-dependent vs context-free metrics
+
+For per-k evaluation (below) we partition the metric set:
+
+| Metric                       | Uses contexts? |
+|------------------------------|----------------|
+| `faithfulness`               | yes            |
+| `context_precision`          | yes            |
+| `context_recall`             | yes            |
+| `nv_response_groundedness`   | yes            |
+| `nv_context_relevance`       | yes            |
+| `answer_relevancy`           | no             |
+| `answer_correctness`         | no             |
+| `nv_accuracy`                | no             |
+
+Context-dependent metrics are replicated per retrieval-k; context-free metrics
+run exactly once. An unknown metric is treated as context-free (single pass)
+so it doesn't get pointlessly multiplied across k.
 
 ## Common invocations
 
@@ -151,6 +174,82 @@ uv run triplet-rag eval-ragas <id> -j openai:gpt-4o --force
 uv run triplet-rag eval-ragas <id> -j openai:gpt-4o --judge-tag gpt4o_rerun_2
 ```
 
+### 6. Per-k evaluation (auto-derived from the experiment)
+
+Context-dependent RAGAS metrics depend on *which* retrieved chunks you feed
+them. To line up with retrieval@k, the runner replicates those metrics for
+each `k` and suffixes the output names: `faithfulness@5`, `faithfulness@10`,
+`faithfulness@20`. Context-free metrics (`answer_relevancy`,
+`answer_correctness`, `nv_accuracy`) run once.
+
+By default, `ks` are auto-derived from the experiment's
+`metrics.retrieval_metrics` (everything with an `@<k>` suffix — `nDCG@10`,
+`Recall@5`, etc.). To override:
+
+```bash
+uv run triplet-rag eval-ragas <id> --ks 5,10,20
+uv run triplet-rag eval-ragas <id> --ks ""        # force a single un-suffixed pass
+```
+
+The resulting `aggregate.json` mixes the two scopes:
+
+```json
+{
+  "faithfulness@5":  {"mean": 0.81, "ci_low": ..., "ci_high": ..., "n": 1000},
+  "faithfulness@10": {"mean": 0.83, ...},
+  "faithfulness@20": {"mean": 0.84, ...},
+  "answer_correctness": {"mean": 0.62, ...}
+}
+```
+
+`judge.json` records which `ks` were used and which metric names fell into
+each partition.
+
+### 7. Tuning concurrency and timeout
+
+The two knobs map directly to RAGAS' `RunConfig` (defaults: `max_workers=16`,
+`timeout=180s`). Raise concurrency for OpenAI when you're not rate-limited;
+*lower* it for a local vLLM that you don't want to swamp:
+
+```bash
+uv run triplet-rag eval-ragas <id> --concurrency 4 --timeout 600
+```
+
+If neither flag is passed, RAGAS' defaults are used and no `RunConfig` is
+constructed.
+
+### 8. Dumping the inputs RAGAS actually sees
+
+`--dump-inputs` writes the per-row dict (question / answer / contexts /
+ground_truth / query_id) sent to `ragas.evaluate` as JSONL. One file per
+scope:
+
+```
+metrics/ragas/<tag>/inputs/
+├── context_free.jsonl         # contexts: []  (these metrics ignore them)
+├── k5.jsonl                   # contexts truncated to top-5
+├── k10.jsonl
+└── k20.jsonl
+```
+
+Useful for sanity-checking gold-answer alignment and verifying that the
+truncation actually happened. If no per-k is in effect, you get a single
+`context_dependent.jsonl` instead.
+
+### 9. Printing judge prompts (debug mode)
+
+`--debug` toggles `langchain_core.globals.set_debug(True)` before calling
+`ragas.evaluate`, which dumps every chat-LLM invocation and its response.
+We use `set_debug` rather than `set_verbose` because RAGAS bypasses the
+LangChain Chain layer that `set_verbose` hooks into — `set_verbose(True)` is
+silent for RAGAS.
+
+```bash
+uv run triplet-rag eval-ragas <id> --debug -m faithfulness 2>&1 | tee judge_prompts.log
+```
+
+Pair with `--dump-inputs` for full reproducibility of what each judge saw.
+
 ## Flags reference
 
 | Flag              | Default                                         | Notes |
@@ -163,6 +262,15 @@ uv run triplet-rag eval-ragas <id> -j openai:gpt-4o --judge-tag gpt4o_rerun_2
 | `--temperature`   | `0.0`                                           |  |
 | `--max-tokens`    | `1024`                                          |  |
 | `--force` / `-f`  | `false`                                         | Overwrite an existing tag. |
+| `--concurrency`   | RAGAS default (16)                              | `RunConfig.max_workers`. |
+| `--timeout`       | RAGAS default (180s)                            | `RunConfig.timeout`, per-call. |
+| `--debug`         | `false`                                         | `langchain_core.globals.set_debug(True)` — prints judge prompts. |
+| `--dump-inputs`   | `false`                                         | Dump `ragas.evaluate` inputs to `inputs/<scope>.jsonl`. |
+| `--ks`            | auto-derive from `metrics.retrieval_metrics`    | Comma-separated; `""` forces a single un-suffixed pass. |
+
+All of these are CLI/runner-level knobs — none of them flow into
+`MetricsConfig`, so flipping any of them on a finished experiment does **not**
+invalidate its `experiment_hash`.
 
 ## Programmatic API
 
@@ -174,8 +282,21 @@ from triplet_rag.evaluate import run_ragas_on_experiment
 agg, out_dir = run_ragas_on_experiment(
     exp_dir=Path("storage/experiments/20260508_134237_..._squad_triplet_pilot"),
     judge_cfg=LLMConfig(kind="vllm", model_name="Qwen/Qwen2.5-32B-Instruct"),
-    metric_names=["faithfulness", "nv_response_groundedness"],
+    metric_names=["faithfulness", "nv_response_groundedness", "answer_correctness"],
     judge_base_url="http://localhost:7114/v1",
+    concurrency=8,
+    timeout=600,
+    debug=False,
+    dump_inputs=True,
+    ks=[5, 10, 20],   # or None → auto-derive from experiment config
 )
-print(agg)  # {"faithfulness": 0.83, "nv_response_groundedness": 0.79}
+print(agg)
+# {"faithfulness@5": 0.81, "faithfulness@10": 0.83, "faithfulness@20": 0.84,
+#  "nv_response_groundedness@5": 0.78, ...,
+#  "answer_correctness": 0.62}
 ```
+
+The in-pipeline call from `phase_compute_metrics` —
+`compute_ragas_metrics(predictions, cfg.metrics)` — is unaffected: it still
+runs a single pass with the metrics named in `MetricsConfig.ragas_metrics`
+and no per-k replication. Per-k lives in the offline rerunner only.

@@ -334,6 +334,38 @@ def eval_ragas_cmd(
     temperature: float = typer.Option(0.0, "--temperature"),
     max_tokens: int = typer.Option(1024, "--max-tokens"),
     force: bool = typer.Option(False, "--force", "-f"),
+    concurrency: Optional[int] = typer.Option(
+        None,
+        "--concurrency",
+        help="Parallel RAGAS workers (ragas RunConfig.max_workers). "
+        "Default: ragas built-in (16).",
+    ),
+    timeout: Optional[int] = typer.Option(
+        None,
+        "--timeout",
+        help="Per-call timeout in seconds (ragas RunConfig.timeout). "
+        "Default: ragas built-in (180s).",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Print judge prompts via langchain_core.globals.set_debug(True).",
+    ),
+    dump_inputs: bool = typer.Option(
+        False,
+        "--dump-inputs",
+        help="Dump the rows fed to ragas.evaluate as JSONL under "
+        "metrics/ragas/<tag>/inputs/. One file per scope "
+        "(context_free.jsonl, k5.jsonl, …).",
+    ),
+    ks: Optional[str] = typer.Option(
+        None,
+        "--ks",
+        help="Comma-separated retrieval ks at which to replicate "
+        "context-dependent RAGAS metrics (e.g. '5,10,20'). "
+        "Default: auto-derive from the experiment's metrics.retrieval_metrics "
+        "@k suffixes; pass '' to force a single un-suffixed pass.",
+    ),
 ) -> None:
     """Run RAGAS on a completed experiment's predictions.
 
@@ -364,10 +396,34 @@ def eval_ragas_cmd(
     metric_names = [m.strip() for m in metrics.split(",") if m.strip()]
     tag = judge_tag or sanitize_judge_tag(model_name)
 
+    # --ks: None  → auto-derive from experiment config
+    # --ks ""     → explicit empty list (single un-suffixed pass)
+    # --ks "5,10" → parse
+    ks_list: Optional[list[int]] = None
+    if ks is not None:
+        ks_list = []
+        for piece in ks.split(","):
+            piece = piece.strip()
+            if not piece:
+                continue
+            try:
+                ks_list.append(int(piece))
+            except ValueError:
+                typer.echo(f"--ks: '{piece}' is not an integer", err=True)
+                raise typer.Exit(2) from None
+
     endpoint_str = f" @ {base_url}" if base_url else ""
     console.print(f"[bold]Experiment:[/bold] {exp_dir.name}")
     console.print(f"[bold]Judge:[/bold] {kind}:{model_name}{endpoint_str} (tag={tag})")
     console.print(f"[bold]Metrics:[/bold] {metric_names}")
+    if ks_list is not None:
+        console.print(f"[bold]ks (override):[/bold] {ks_list or 'single-pass'}")
+    if concurrency is not None or timeout is not None:
+        console.print(
+            f"[bold]RunConfig:[/bold] concurrency={concurrency}, timeout={timeout}"
+        )
+    if debug:
+        console.print("[yellow]debug=True (judge prompts will be printed)[/yellow]")
 
     try:
         agg, out_dir = run_ragas_on_experiment(
@@ -378,6 +434,11 @@ def eval_ragas_cmd(
             judge_base_url=base_url,
             judge_api_key=api_key,
             force=force,
+            concurrency=concurrency,
+            timeout=timeout,
+            debug=debug,
+            dump_inputs=dump_inputs,
+            ks=ks_list,
         )
     except FileExistsError as e:
         typer.echo(str(e), err=True)
