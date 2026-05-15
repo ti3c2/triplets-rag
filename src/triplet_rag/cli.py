@@ -334,9 +334,9 @@ def eval_ragas_cmd(
     temperature: float = typer.Option(0.0, "--temperature"),
     max_tokens: int = typer.Option(1024, "--max-tokens"),
     force: bool = typer.Option(False, "--force", "-f"),
-    concurrency: Optional[int] = typer.Option(
+    max_workers: Optional[int] = typer.Option(
         None,
-        "--concurrency",
+        "--max-workers",
         help="Parallel RAGAS workers (ragas RunConfig.max_workers). "
         "Default: ragas built-in (16).",
     ),
@@ -418,9 +418,9 @@ def eval_ragas_cmd(
     console.print(f"[bold]Metrics:[/bold] {metric_names}")
     if ks_list is not None:
         console.print(f"[bold]ks (override):[/bold] {ks_list or 'single-pass'}")
-    if concurrency is not None or timeout is not None:
+    if max_workers is not None or timeout is not None:
         console.print(
-            f"[bold]RunConfig:[/bold] concurrency={concurrency}, timeout={timeout}"
+            f"[bold]RunConfig:[/bold] max_workers={max_workers}, timeout={timeout}"
         )
     if debug:
         console.print("[yellow]debug=True (judge prompts will be printed)[/yellow]")
@@ -434,7 +434,7 @@ def eval_ragas_cmd(
             judge_base_url=base_url,
             judge_api_key=api_key,
             force=force,
-            concurrency=concurrency,
+            max_workers=max_workers,
             timeout=timeout,
             debug=debug,
             dump_inputs=dump_inputs,

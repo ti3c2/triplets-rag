@@ -115,7 +115,7 @@ def compute_ragas_metrics(
     *,
     judge_base_url: str | None = None,
     judge_api_key: str | None = None,
-    concurrency: int | None = None,
+    max_workers: int | None = None,
     timeout: int | None = None,
     debug: bool = False,
     dump_path: Path | None = None,
@@ -125,7 +125,7 @@ def compute_ragas_metrics(
     `judge_base_url` / `judge_api_key` override settings for this call only;
     used by the offline rerunner to target a self-hosted endpoint.
 
-    `concurrency` / `timeout` are wired into a ragas `RunConfig` when set.
+    `max_workers` / `timeout` are wired into a ragas `RunConfig` when set.
     `debug=True` enables `langchain_core.globals.set_debug(True)` so the judge
     prompts are printed (we don't use `set_verbose` because RAGAS bypasses the
     Chain layer). `dump_path`, when set, writes the dataset rows actually sent
@@ -217,12 +217,12 @@ def compute_ragas_metrics(
     embeddings = _build_ragas_embeddings()
 
     run_config: Any = None
-    if concurrency is not None or timeout is not None:
+    if max_workers is not None or timeout is not None:
         # Use ragas defaults for fields the caller didn't override.
         defaults = RunConfig()
         run_config = RunConfig(
             timeout=timeout if timeout is not None else defaults.timeout,
-            max_workers=concurrency if concurrency is not None else defaults.max_workers,
+            max_workers=max_workers if max_workers is not None else defaults.max_workers,
         )
         logger.info(
             f"RAGAS RunConfig: max_workers={run_config.max_workers}, "

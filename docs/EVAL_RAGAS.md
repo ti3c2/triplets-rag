@@ -205,14 +205,14 @@ The resulting `aggregate.json` mixes the two scopes:
 `judge.json` records which `ks` were used and which metric names fell into
 each partition.
 
-### 7. Tuning concurrency and timeout
+### 7. Tuning max-workers and timeout
 
 The two knobs map directly to RAGAS' `RunConfig` (defaults: `max_workers=16`,
-`timeout=180s`). Raise concurrency for OpenAI when you're not rate-limited;
+`timeout=180s`). Raise `max_workers` for OpenAI when you're not rate-limited;
 *lower* it for a local vLLM that you don't want to swamp:
 
 ```bash
-uv run triplet-rag eval-ragas <id> --concurrency 4 --timeout 600
+uv run triplet-rag eval-ragas <id> --max-workers 4 --timeout 600
 ```
 
 If neither flag is passed, RAGAS' defaults are used and no `RunConfig` is
@@ -262,7 +262,7 @@ Pair with `--dump-inputs` for full reproducibility of what each judge saw.
 | `--temperature`   | `0.0`                                           |  |
 | `--max-tokens`    | `1024`                                          |  |
 | `--force` / `-f`  | `false`                                         | Overwrite an existing tag. |
-| `--concurrency`   | RAGAS default (16)                              | `RunConfig.max_workers`. |
+| `--max-workers`   | RAGAS default (16)                              | `RunConfig.max_workers`. |
 | `--timeout`       | RAGAS default (180s)                            | `RunConfig.timeout`, per-call. |
 | `--debug`         | `false`                                         | `langchain_core.globals.set_debug(True)` — prints judge prompts. |
 | `--dump-inputs`   | `false`                                         | Dump `ragas.evaluate` inputs to `inputs/<scope>.jsonl`. |
@@ -284,7 +284,7 @@ agg, out_dir = run_ragas_on_experiment(
     judge_cfg=LLMConfig(kind="vllm", model_name="Qwen/Qwen2.5-32B-Instruct"),
     metric_names=["faithfulness", "nv_response_groundedness", "answer_correctness"],
     judge_base_url="http://localhost:7114/v1",
-    concurrency=8,
+    max_workers=8,
     timeout=600,
     debug=False,
     dump_inputs=True,

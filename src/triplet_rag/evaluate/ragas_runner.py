@@ -110,7 +110,7 @@ def _run_one_pass(
     bootstrap_seed: int,
     judge_base_url: str | None,
     judge_api_key: str | None,
-    concurrency: int | None,
+    max_workers: int | None,
     timeout: int | None,
     debug: bool,
     dump_path: Path | None,
@@ -129,8 +129,8 @@ def _run_one_pass(
     # Conditionally pass new kwargs so tests stubbing `compute_ragas_metrics`
     # with the narrow legacy signature keep working.
     extra: dict = {}
-    if concurrency is not None:
-        extra["concurrency"] = concurrency
+    if max_workers is not None:
+        extra["max_workers"] = max_workers
     if timeout is not None:
         extra["timeout"] = timeout
     if debug:
@@ -164,7 +164,7 @@ def run_ragas_on_experiment(
     bootstrap_n: int = 1000,
     bootstrap_seed: int = 12345,
     force: bool = False,
-    concurrency: int | None = None,
+    max_workers: int | None = None,
     timeout: int | None = None,
     debug: bool = False,
     dump_inputs: bool = False,
@@ -223,7 +223,7 @@ def run_ragas_on_experiment(
         f"RAGAS rerun on {pred_path.name} with judge {judge_cfg.kind}:"
         f"{judge_cfg.model_name}{endpoint_note} (tag={tag}); "
         f"metrics={metric_names}; ks={resolved_ks or 'single-pass'}; "
-        f"concurrency={concurrency}; timeout={timeout}; debug={debug}"
+        f"max_workers={max_workers}; timeout={timeout}; debug={debug}"
     )
 
     inputs_dir = out_dir / "inputs" if dump_inputs else None
@@ -240,7 +240,7 @@ def run_ragas_on_experiment(
             bootstrap_seed=bootstrap_seed,
             judge_base_url=judge_base_url,
             judge_api_key=judge_api_key,
-            concurrency=concurrency,
+            max_workers=max_workers,
             timeout=timeout,
             debug=debug,
             dump_path=(inputs_dir / "context_free.jsonl") if inputs_dir else None,
@@ -261,7 +261,7 @@ def run_ragas_on_experiment(
                     bootstrap_seed=bootstrap_seed,
                     judge_base_url=judge_base_url,
                     judge_api_key=judge_api_key,
-                    concurrency=concurrency,
+                    max_workers=max_workers,
                     timeout=timeout,
                     debug=debug,
                     dump_path=(inputs_dir / f"k{k}.jsonl") if inputs_dir else None,
@@ -279,7 +279,7 @@ def run_ragas_on_experiment(
                 bootstrap_seed=bootstrap_seed,
                 judge_base_url=judge_base_url,
                 judge_api_key=judge_api_key,
-                concurrency=concurrency,
+                max_workers=max_workers,
                 timeout=timeout,
                 debug=debug,
                 dump_path=(inputs_dir / "context_dependent.jsonl") if inputs_dir else None,
@@ -313,7 +313,7 @@ def run_ragas_on_experiment(
             "ks": resolved_ks,
             "context_free_metrics": cf_metrics,
             "context_dependent_metrics": cd_metrics,
-            "concurrency": concurrency,
+            "max_workers": max_workers,
             "timeout": timeout,
             "debug": debug,
             "dump_inputs": dump_inputs,
