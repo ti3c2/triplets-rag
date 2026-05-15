@@ -16,16 +16,18 @@ when you want a multi-subcommand tool.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from .config import ExperimentConfig, LLMConfig
-from .evaluate import run_ragas_on_experiment, sanitize_judge_tag
+from .evaluate import (
+    derive_context_ks_from_experiment,
+    run_ragas_on_experiment,
+    sanitize_judge_tag,
+)
 from .experiment import list_experiments, run_experiment
 from .settings import get_settings
 from .utils.io import read_json
@@ -33,6 +35,13 @@ from .utils.logging import setup_logging
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
+_OVERRIDE_OPTION = typer.Option(
+    None,
+    "--override",
+    "-o",
+    help="Hydra-style override, e.g. budget.num_triplets=3 (repeatable)",
+)
+_FILTER_OPTION = typer.Option(None, "--filter", help="key=value filters")
 
 
 def _load_config(config: str, overrides: list[str] | None = None) -> ExperimentConfig:
@@ -71,12 +80,7 @@ def run(
     config: str = typer.Option(
         ..., "--config", "-c", help="Config name, e.g. experiment/fixture_smoke"
     ),
-    override: list[str] = typer.Option(
-        [],
-        "--override",
-        "-o",
-        help="Hydra-style override, e.g. budget.num_triplets=3 (repeatable)",
-    ),
+    override: list[str] | None = _OVERRIDE_OPTION,
     force: bool = typer.Option(False, "--force", "-f", help="Force re-run all phases"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print resolved config and exit"),
 ) -> None:
@@ -152,11 +156,11 @@ def _filters_from_strs(filter_strs: list[str]) -> dict[str, str]:
 
 @app.command(name="list")
 def list_cmd(
-    filter: list[str] = typer.Option([], "--filter", help="key=value filters"),
+    filter: list[str] | None = _FILTER_OPTION,
 ) -> None:
     """List registered experiments."""
     s = get_settings()
-    df = list_experiments(s.storage_dir, _filters_from_strs(filter))
+    df = list_experiments(s.storage_dir, _filters_from_strs(filter or []))
     if df.empty:
         console.print("[dim]No experiments registered[/dim]")
         return
@@ -195,7 +199,7 @@ def list_cmd(
 
 @app.command()
 def report(
-    filter: list[str] = typer.Option([], "--filter", help="key=value filters"),
+    filter: list[str] | None = _FILTER_OPTION,
     metrics: str = typer.Option(
         "em,f1,rouge_l,faithfulness,answer_correctness",
         "--metrics",
@@ -204,7 +208,7 @@ def report(
 ) -> None:
     """Side-by-side comparison of experiments matching the filter."""
     s = get_settings()
-    df = list_experiments(s.storage_dir, _filters_from_strs(filter))
+    df = list_experiments(s.storage_dir, _filters_from_strs(filter or []))
     if df.empty:
         console.print("[dim]No matching experiments[/dim]")
         return
@@ -295,6 +299,26 @@ def _resolve_exp_dir(experiment_id: str) -> Path:
     return chosen
 
 
+def _parse_context_ks(value: str | None) -> list[int] | None:
+    if value is None:
+        return None
+    ks: set[int] = set()
+    for piece in value.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            k = int(piece)
+        except ValueError as e:
+            raise ValueError(f"--ks must be a comma-separated list of integers, got {piece!r}") from e
+        if k < 1:
+            raise ValueError("--ks values must be positive integers")
+        ks.add(k)
+    if not ks:
+        raise ValueError("--ks must include at least one positive integer")
+    return sorted(ks)
+
+
 @app.command(name="eval-ragas")
 def eval_ragas_cmd(
     experiment_id: str = typer.Argument(..., help="Experiment id (or fuzzy substring)"),
@@ -313,19 +337,26 @@ def eval_ragas_cmd(
         "context_precision, context_recall, nv_accuracy, "
         "nv_response_groundedness, nv_context_relevance.",
     ),
-    judge_tag: Optional[str] = typer.Option(
+    ks: str | None = typer.Option(
+        None,
+        "--ks",
+        "--context-ks",
+        help="Comma-separated context cutoffs for context-dependent RAGAS metrics. "
+        "Defaults to @k values from the experiment's retrieval metrics.",
+    ),
+    judge_tag: str | None = typer.Option(
         None,
         "--judge-tag",
         help="Folder label for this run; defaults to the sanitized model name.",
     ),
-    base_url: Optional[str] = typer.Option(
+    base_url: str | None = typer.Option(
         None,
         "--base-url",
         help="OpenAI-compatible endpoint for the judge "
         "(e.g. http://localhost:7114/v1 for a self-hosted vLLM). "
         "Required when kind=vllm and the host differs from VLLM_BASE_URL.",
     ),
-    api_key: Optional[str] = typer.Option(
+    api_key: str | None = typer.Option(
         None,
         "--api-key",
         help="API key for the judge endpoint. "
@@ -333,6 +364,26 @@ def eval_ragas_cmd(
     ),
     temperature: float = typer.Option(0.0, "--temperature"),
     max_tokens: int = typer.Option(1024, "--max-tokens"),
+    max_workers: int | None = typer.Option(
+        None,
+        "--max-workers",
+        help="RAGAS RunConfig max_workers for judge concurrency.",
+    ),
+    timeout: int | None = typer.Option(
+        None,
+        "--timeout",
+        help="RAGAS RunConfig per-operation timeout in seconds.",
+    ),
+    dump_inputs: bool = typer.Option(
+        False,
+        "--dump-inputs",
+        help="Write the exact RAGAS input rows to metrics/ragas/<tag>/inputs.jsonl.",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable langchain_core.globals.set_debug(True) so judge prompts are printed.",
+    ),
     force: bool = typer.Option(False, "--force", "-f"),
 ) -> None:
     """Run RAGAS on a completed experiment's predictions.
@@ -362,12 +413,42 @@ def eval_ragas_cmd(
         max_tokens=max_tokens,
     )
     metric_names = [m.strip() for m in metrics.split(",") if m.strip()]
+    try:
+        context_ks_override = _parse_context_ks(ks)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from e
+    if max_workers is not None and max_workers < 1:
+        typer.echo("--max-workers must be >= 1", err=True)
+        raise typer.Exit(2)
+    if timeout is not None and timeout < 1:
+        typer.echo("--timeout must be >= 1", err=True)
+        raise typer.Exit(2)
+
+    if context_ks_override is None:
+        context_ks = derive_context_ks_from_experiment(exp_dir)
+        context_ks_source = "experiment.metrics.retrieval_metrics" if context_ks else "none"
+    else:
+        context_ks = context_ks_override
+        context_ks_source = "cli"
     tag = judge_tag or sanitize_judge_tag(model_name)
 
     endpoint_str = f" @ {base_url}" if base_url else ""
     console.print(f"[bold]Experiment:[/bold] {exp_dir.name}")
     console.print(f"[bold]Judge:[/bold] {kind}:{model_name}{endpoint_str} (tag={tag})")
     console.print(f"[bold]Metrics:[/bold] {metric_names}")
+    console.print(
+        f"[bold]Context ks:[/bold] {context_ks if context_ks else 'all contexts'} "
+        f"({context_ks_source})"
+    )
+    if max_workers is not None:
+        console.print(f"[bold]Max workers:[/bold] {max_workers}")
+    if timeout is not None:
+        console.print(f"[bold]Timeout:[/bold] {timeout}s")
+    if dump_inputs:
+        console.print("[bold]Input dump:[/bold] enabled")
+    if debug:
+        console.print("[bold]Debug:[/bold] langchain prompts enabled")
 
     try:
         agg, out_dir = run_ragas_on_experiment(
@@ -377,11 +458,17 @@ def eval_ragas_cmd(
             judge_tag=tag,
             judge_base_url=base_url,
             judge_api_key=api_key,
+            context_ks=context_ks,
+            context_ks_source=context_ks_source,
+            max_workers=max_workers,
+            timeout=timeout,
+            dump_inputs=dump_inputs,
+            debug=debug,
             force=force,
         )
-    except FileExistsError as e:
+    except (FileExistsError, ValueError) as e:
         typer.echo(str(e), err=True)
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     console.print(f"\n[green]done[/green] -> {out_dir}")
     console.print("\n[bold]RAGAS aggregate (means):[/bold]")

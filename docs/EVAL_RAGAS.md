@@ -24,11 +24,12 @@ storage/experiments/<experiment_id>/metrics/
 ├── per_query.parquet          # original (lexical + retrieval)
 ├── aggregate.json             # original
 └── ragas/
-    ├── runs.json              # index: tag -> {judge_model, base_url, metrics, ran_at}
+    ├── runs.json              # index: tag -> judge, endpoint, metrics, knobs, ran_at
     ├── <judge_tag_1>/
     │   ├── per_query.parquet  # this judge's per-query scores
     │   ├── aggregate.json     # this judge's means + bootstrap CIs
-    │   └── judge.json         # full judge config + endpoint + n_queries
+    │   ├── judge.json         # full judge config + endpoint + runtime knobs
+    │   └── inputs.jsonl       # optional, only with --dump-inputs
     └── <judge_tag_2>/
         └── ...
 ```
@@ -55,6 +56,38 @@ Pass any subset to `--metrics`, comma-separated.
 For SQuAD: `faithfulness` and `nv_response_groundedness` are the load-bearing
 ones. `answer_correctness` / `nv_accuracy` add cost without much signal beyond
 EM/F1.
+
+## Per-k context evaluation
+
+`eval-ragas` aligns context-dependent judge metrics with retrieval cutoffs. By
+default it reads `config.yaml.json` and derives unique `@k` values from
+`metrics.retrieval_metrics` (for example `P@1`, `R@5`, `nDCG@10` -> `1,5,10`).
+
+Context-dependent metrics run once per cutoff using `retrieved_texts[:k]`, and
+their output names are suffixed as `<metric>@<k>`:
+
+- `faithfulness`
+- `context_precision`
+- `context_recall`
+- `nv_response_groundedness`
+- `nv_context_relevance`
+
+Context-free metrics run once and remain unsuffixed:
+
+- `answer_relevancy`
+- `answer_correctness`
+- `nv_accuracy`
+
+Override the derived cutoffs with `--ks`, for example:
+
+```bash
+uv run triplet-rag eval-ragas <id> \
+    -m faithfulness,answer_correctness \
+    --ks 5,10,20
+```
+
+That produces `faithfulness@5`, `faithfulness@10`, `faithfulness@20`, and one
+unsuffixed `answer_correctness`.
 
 ## Common invocations
 
@@ -141,7 +174,38 @@ uv run triplet-rag eval-ragas <id> \
 
 Requires `ANTHROPIC_API_KEY` in `.env`. `--base-url` is ignored for Anthropic.
 
-### 5. Force re-run with the same tag
+### 5. Limit concurrency and timeout
+
+```bash
+uv run triplet-rag eval-ragas <id> \
+    -m faithfulness,nv_response_groundedness \
+    --max-workers 4 \
+    --timeout 120
+```
+
+These are passed to RAGAS `RunConfig(max_workers=..., timeout=...)`. They are
+runtime controls only and are not stored in `MetricsConfig`, so they do not
+change the experiment hash.
+
+### 6. Dump inputs and print judge prompts
+
+```bash
+uv run triplet-rag eval-ragas <id> \
+    -m faithfulness \
+    --ks 5 \
+    --dump-inputs \
+    --debug
+```
+
+`--dump-inputs` writes `metrics/ragas/<tag>/inputs.jsonl`. With per-k enabled,
+the dump contains one row per query per RAGAS run, including the truncated
+contexts and the metric names for that run.
+
+`--debug` calls `langchain_core.globals.set_debug(True)` while RAGAS runs so
+LangChain prints the judge prompts. Do not use `set_verbose`; RAGAS bypasses
+the Chain layer for these calls.
+
+### 7. Force re-run with the same tag
 
 Trying to write to an existing tag raises an error. Pass `--force` to
 overwrite, or set a different `--judge-tag` to keep both:
@@ -157,11 +221,16 @@ uv run triplet-rag eval-ragas <id> -j openai:gpt-4o --judge-tag gpt4o_rerun_2
 |-------------------|-------------------------------------------------|-------|
 | `--judge-model`   | `openai:gpt-4o`                                 | `<kind>:<model_name>`; kind ∈ {openai, anthropic, vllm, local_hf}. |
 | `--metrics`       | `faithfulness,answer_relevancy,answer_correctness` | Comma-separated. See table above. |
+| `--ks` / `--context-ks` | derived from `metrics.retrieval_metrics` | Comma-separated context cutoffs for context-dependent metrics. |
 | `--judge-tag`     | sanitized `<model_name>`                         | Folder label. Sanitization replaces `/`, ` `, `@` with `_`. |
 | `--base-url`      | `VLLM_BASE_URL` (only for vllm/local_hf kinds)  | Per-call override; doesn't mutate env. |
 | `--api-key`       | provider env var                                | Per-call override. |
 | `--temperature`   | `0.0`                                           |  |
 | `--max-tokens`    | `1024`                                          |  |
+| `--max-workers`   | RAGAS default                                   | Passed to RAGAS `RunConfig.max_workers`. |
+| `--timeout`       | RAGAS default                                   | Passed to RAGAS `RunConfig.timeout`, in seconds. |
+| `--dump-inputs`   | `false`                                         | Writes `inputs.jsonl` beside the run outputs. |
+| `--debug`         | `false`                                         | Enables `langchain_core.globals.set_debug(True)` during RAGAS. |
 | `--force` / `-f`  | `false`                                         | Overwrite an existing tag. |
 
 ## Programmatic API
@@ -176,6 +245,10 @@ agg, out_dir = run_ragas_on_experiment(
     judge_cfg=LLMConfig(kind="vllm", model_name="Qwen/Qwen2.5-32B-Instruct"),
     metric_names=["faithfulness", "nv_response_groundedness"],
     judge_base_url="http://localhost:7114/v1",
+    context_ks=[5, 10, 20],
+    max_workers=4,
+    timeout=120,
+    dump_inputs=True,
 )
-print(agg)  # {"faithfulness": 0.83, "nv_response_groundedness": 0.79}
+print(agg)  # {"faithfulness@5": 0.80, "faithfulness@10": 0.83, ...}
 ```

@@ -15,7 +15,7 @@ import pytest
 
 from triplet_rag.config import LLMConfig
 from triplet_rag.evaluate import ragas_runner
-from triplet_rag.utils.io import read_json, write_jsonl
+from triplet_rag.utils.io import read_json, write_json, write_jsonl
 
 
 def _make_predictions(exp_dir: Path) -> None:
@@ -197,3 +197,61 @@ def test_base_url_threaded_through(tmp_path, monkeypatch):
     assert judge_json["judge_base_url"] == "http://localhost:7114/v1"
     runs = read_json(exp / "metrics" / "ragas" / "runs.json")
     assert runs["Qwen_Qwen2.5-32B-Instruct"]["judge_base_url"] == "http://localhost:7114/v1"
+
+
+def test_derives_context_ks_from_retrieval_metrics():
+    assert ragas_runner.derive_context_ks_from_retrieval_metrics(
+        ["nDCG@10", "RR", "R@5", "P@1", "Recall@10", "bad@0"]
+    ) == [1, 5, 10]
+
+
+def test_runtime_knobs_threaded_and_recorded(tmp_path, monkeypatch):
+    exp = tmp_path / "exp_knobs"
+    exp.mkdir()
+    _make_predictions(exp)
+    write_json(
+        {"metrics": {"retrieval_metrics": ["nDCG@10", "RR", "R@5", "P@1", "Recall@10"]}},
+        exp / "config.yaml.json",
+    )
+
+    captured = {}
+
+    def _fake(predictions, cfg, *, judge_base_url=None, judge_api_key=None, **kwargs):
+        captured.update(kwargs)
+        rows = []
+        agg = {}
+        for metric in ["faithfulness@1", "faithfulness@5", "faithfulness@10"]:
+            agg[metric] = 0.6
+            for p in predictions:
+                rows.append({"query_id": p["query_id"], "metric": metric, "value": 0.6})
+        return agg, pd.DataFrame(rows)
+
+    monkeypatch.setattr(ragas_runner, "compute_ragas_metrics", _fake)
+
+    _, out_dir = ragas_runner.run_ragas_on_experiment(
+        exp_dir=exp,
+        judge_cfg=LLMConfig(kind="openai", model_name="gpt-4o"),
+        metric_names=["faithfulness"],
+        max_workers=3,
+        timeout=45,
+        dump_inputs=True,
+        debug=True,
+    )
+
+    assert captured["context_ks"] == [1, 5, 10]
+    assert captured["max_workers"] == 3
+    assert captured["timeout"] == 45
+    assert captured["input_dump_path"] == out_dir / "inputs.jsonl"
+    assert captured["debug"] is True
+
+    judge_json = read_json(out_dir / "judge.json")
+    assert judge_json["context_ks"] == [1, 5, 10]
+    assert judge_json["context_ks_source"] == "experiment.metrics.retrieval_metrics"
+    assert judge_json["max_workers"] == 3
+    assert judge_json["timeout"] == 45
+    assert judge_json["input_dump_path"] == "inputs.jsonl"
+    assert judge_json["debug"] is True
+
+    runs = read_json(exp / "metrics" / "ragas" / "runs.json")
+    assert runs["gpt-4o"]["context_ks"] == [1, 5, 10]
+    assert runs["gpt-4o"]["input_dump_path"] == "inputs.jsonl"
