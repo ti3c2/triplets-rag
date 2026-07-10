@@ -62,6 +62,25 @@ CONTEXT_DEPENDENT_METRICS = CONTEXT_DEPENDENT_RAGAS_METRICS
 CONTEXT_FREE_METRICS = SUPPORTED_RAGAS_METRICS - CONTEXT_DEPENDENT_RAGAS_METRICS
 
 
+def _find_metric_result_column(
+    df_columns: list[str], requested_name: str, metric_name: str
+) -> str | None:
+    """Map a configured metric name to the column returned by RAGAS.
+
+    Some RAGAS metrics include constructor parameters in the result column
+    name, e.g. ``rouge_score(mode=fmeasure)`` for ``RougeScore()``.
+    """
+    for name in (metric_name, requested_name):
+        if name in df_columns:
+            return name
+    for name in (metric_name, requested_name):
+        prefix = f"{name}("
+        matches = [col for col in df_columns if col.startswith(prefix)]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
 def _build_ragas_judge_llm(
     judge_cfg: LLMConfig | None,
     *,
@@ -390,9 +409,21 @@ def compute_ragas_metrics(
             df = result.to_pandas()
             df["query_id"] = [row["query_id"] for row in rows]
 
-            metric_cols = [m.name for m in metrics if m.name in df.columns]
+            result_cols: dict[str, str] = {}
+            df_columns = list(df.columns)
+            for requested_name, metric in zip(metric_names, metrics, strict=True):
+                metric_name = getattr(metric, "name", requested_name)
+                result_col = _find_metric_result_column(df_columns, requested_name, metric_name)
+                if result_col is None:
+                    logger.warning(
+                        f"RAGAS result missing column for metric '{requested_name}'. "
+                        f"Available columns: {df_columns}"
+                    )
+                    continue
+                result_cols[result_col] = metric_labels.get(requested_name, requested_name)
+
             for _, row in df.iterrows():
-                for col in metric_cols:
+                for col, label in result_cols.items():
                     value = row[col]
                     try:
                         score = float(value)
@@ -403,7 +434,7 @@ def compute_ragas_metrics(
                     long_rows.append(
                         {
                             "query_id": row["query_id"],
-                            "metric": metric_labels.get(col, col),
+                            "metric": label,
                             "value": score,
                         }
                     )

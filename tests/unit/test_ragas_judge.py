@@ -116,6 +116,23 @@ def _install_fake_ragas(monkeypatch, calls):
     monkeypatch.setitem(sys.modules, "ragas.run_config", run_config_mod)
 
 
+def test_find_metric_result_column_handles_parameterized_ragas_columns():
+    columns = [
+        "user_input",
+        "response",
+        "reference",
+        "rouge_score(mode=fmeasure)",
+        "bleu_score",
+    ]
+
+    assert (
+        judge._find_metric_result_column(columns, "rouge_score", "rouge_score")
+        == "rouge_score(mode=fmeasure)"
+    )
+    assert judge._find_metric_result_column(columns, "bleu_score", "bleu_score") == "bleu_score"
+    assert judge._find_metric_result_column(columns, "missing", "missing") is None
+
+
 def test_compute_ragas_metrics_runs_context_metrics_per_k(tmp_path, monkeypatch):
     calls = []
     _install_fake_ragas(monkeypatch, calls)
