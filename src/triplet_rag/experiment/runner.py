@@ -30,6 +30,7 @@ from ..preprocess import build_triplets, filter_triplets, generate_questions
 from ..settings import get_settings
 from ..utils.io import (
     has_success,
+    read_json,
     read_jsonl,
     read_parquet,
     touch_success,
@@ -113,6 +114,20 @@ def _needs_questions(cfg: ExperimentConfig) -> bool:
 
 def _needs_triplets(cfg: ExperimentConfig) -> bool:
     return cfg.indexer.indexing_strategy in (IndexingStrategy.TRIPLETS, IndexingStrategy.QA_PAIRS)
+
+
+TRIPLET_ANSWER_SOURCE = "seed_answer"
+
+
+def _triplets_current(paths: _PathSet) -> bool:
+    success_path = _phase_success(paths.art_dir, "triplets")
+    if not has_success(success_path) or not paths.triplets_path.exists():
+        return False
+    try:
+        marker = read_json(success_path)
+    except Exception:
+        return False
+    return marker.get("answer_source") == TRIPLET_ANSWER_SOURCE
 
 
 # ----- Phase implementations -----
@@ -208,13 +223,13 @@ def phase_build_chunk_only_index(cfg: ExperimentConfig, paths: _PathSet, force: 
     save_bundle(bundle, paths.chunk_only_index_dir)
 
 
-def phase_build_triplets(cfg: ExperimentConfig, paths: _PathSet, force: bool) -> None:
+def phase_build_triplets(cfg: ExperimentConfig, paths: _PathSet, force: bool) -> bool:
     if not _needs_triplets(cfg):
         logger.info("[phase: triplets] not needed")
-        return
-    if not force and has_success(_phase_success(paths.art_dir, "triplets")):
+        return False
+    if not force and _triplets_current(paths):
         logger.info("[phase: triplets] skipped")
-        return
+        return False
 
     chunks = read_parquet(paths.chunks_path)
     questions = read_parquet(paths.questions_path)
@@ -222,17 +237,35 @@ def phase_build_triplets(cfg: ExperimentConfig, paths: _PathSet, force: bool) ->
     q_emb = np.load(paths.question_emb_path)
 
     lifecycle_log = paths.exp_dir / "logs" / "model_lifecycle.log"
-    with ManagedLLM(cfg.generator, lifecycle_log=lifecycle_log) as teacher:
+    has_seed_answers = (
+        "seed_answer" in questions.columns
+        and questions["seed_answer"].fillna("").astype(str).str.strip().all()
+    )
+    if has_seed_answers:
+        logger.info("[phase: triplets] using seed answers from generated questions")
         triplets = build_triplets(
             questions,
             chunks,
             chunk_index,
             q_emb,
-            teacher,
-            cfg.generator,
+            teacher=None,
+            teacher_cfg=cfg.generator,
             contexts_per_question=cfg.budget.per_triplet_contexts,
             answer_prompt=cfg.preprocessing.answer_prompt,
         )
+    else:
+        logger.info("[phase: triplets] missing seed answers; falling back to generator answers")
+        with ManagedLLM(cfg.generator, lifecycle_log=lifecycle_log) as teacher:
+            triplets = build_triplets(
+                questions,
+                chunks,
+                chunk_index,
+                q_emb,
+                teacher=teacher,
+                teacher_cfg=cfg.generator,
+                contexts_per_question=cfg.budget.per_triplet_contexts,
+                answer_prompt=cfg.preprocessing.answer_prompt,
+            )
 
     if cfg.filtering.enabled:
         judge_cfg = cfg.filtering.judge_model or cfg.generator
@@ -240,7 +273,11 @@ def phase_build_triplets(cfg: ExperimentConfig, paths: _PathSet, force: bool) ->
             triplets = filter_triplets(triplets, cfg.filtering, judge)
 
     write_parquet(triplets, paths.triplets_path)
-    touch_success(_phase_success(paths.art_dir, "triplets"), {"n_triplets": len(triplets)})
+    touch_success(
+        _phase_success(paths.art_dir, "triplets"),
+        {"n_triplets": len(triplets), "answer_source": TRIPLET_ANSWER_SOURCE},
+    )
+    return True
 
 
 def phase_build_index(cfg: ExperimentConfig, paths: _PathSet, force: bool) -> None:
@@ -383,8 +420,8 @@ def run_experiment(cfg: ExperimentConfig, force: bool = False) -> Path:
         phase_generate_questions(cfg, paths, force)
         phase_embed(cfg, paths, force)
         phase_build_chunk_only_index(cfg, paths, force)
-        phase_build_triplets(cfg, paths, force)
-        phase_build_index(cfg, paths, force)
+        triplets_rebuilt = phase_build_triplets(cfg, paths, force)
+        phase_build_index(cfg, paths, force or triplets_rebuilt)
         phase_run_inference(cfg, paths, force)
         phase_compute_metrics(cfg, paths, force)
 
