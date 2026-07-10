@@ -89,10 +89,10 @@ Keep your answer concise.
 
 {% for t in triplets %}
 Example {{ loop.index }}:
-Question: {{ t.question }}
 Contexts:
 {% for c in t.contexts %}- {{ c }}
 {% endfor %}
+Question: {{ t.question }}
 Answer: {{ t.answer }}
 
 {% endfor %}
