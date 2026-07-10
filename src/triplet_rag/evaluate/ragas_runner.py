@@ -292,9 +292,7 @@ def run_ragas_on_experiment(
     if not judge_agg:
         raise RuntimeError("RAGAS returned no metrics — check the logs above for errors")
 
-    combined_pq = (
-        pd.concat(judge_pqs, ignore_index=True) if judge_pqs else pd.DataFrame()
-    )
+    combined_pq = pd.concat(judge_pqs, ignore_index=True) if judge_pqs else pd.DataFrame()
 
     aggregate_and_persist(
         out_dir=out_dir,

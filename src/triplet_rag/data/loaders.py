@@ -14,6 +14,7 @@ Implementations are minimal but real:
 
 from __future__ import annotations
 
+import ast
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -21,6 +22,7 @@ import pandas as pd
 from loguru import logger
 
 from ..config import DatasetConfig
+from ..utils.hashing import stable_hash_str
 from ..utils.io import has_success, touch_success, write_parquet
 
 
@@ -107,8 +109,6 @@ class SquadLoader(DatasetLoader):
             ds = ds.select(range(min(len(ds), self.cfg.max_queries)))
 
         # Doc id = title + hash of context, since same title may have many contexts
-        from ..utils.hashing import stable_hash_str
-
         seen_contexts: dict[str, str] = {}
         corpus_records = []
         qrels_records = []
@@ -148,6 +148,124 @@ class SquadLoader(DatasetLoader):
             pd.DataFrame(corpus_records),
             pd.DataFrame(query_records),
             pd.DataFrame(qrels_records),
+        )
+
+
+def _resolve_source_path(source_path: str) -> Path:
+    path = Path(source_path)
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
+
+
+def _coerce_gold_answers(raw: object) -> list[str]:
+    text = "" if raw is None else str(raw).strip()
+    if not text:
+        return []
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    return [text]
+
+
+class CsvQaLoader(DatasetLoader):
+    """Local CSV QA loader.
+
+    Expected default columns:
+    - id: stable query id
+    - title: document title
+    - text: source passage/context
+    - query: question
+    - answer: reference answer
+    """
+
+    name = "csv_qa"
+
+    def _build(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        if not self.cfg.source_path:
+            raise ValueError(f"dataset {self.cfg.name!r} requires source_path")
+        source = _resolve_source_path(self.cfg.source_path)
+        if not source.exists():
+            raise FileNotFoundError(f"CSV dataset source not found: {source}")
+
+        columns = [
+            self.cfg.id_column,
+            self.cfg.title_column,
+            self.cfg.text_column,
+            self.cfg.query_column,
+            self.cfg.answer_column,
+        ]
+        nrows = self.cfg.max_queries if self.cfg.max_queries else None
+        try:
+            df = pd.read_csv(
+                source,
+                usecols=columns,
+                dtype=str,
+                keep_default_na=False,
+                nrows=nrows,
+            )
+        except ValueError as e:
+            raise ValueError(
+                f"CSV dataset {source} must contain columns {columns}; read_csv failed: {e}"
+            ) from e
+
+        corpus_by_doc_id: dict[str, dict] = {}
+        query_records = []
+        qrel_records = []
+        seen_query_ids: set[str] = set()
+
+        for row_idx, row in df.iterrows():
+            title = str(row.get(self.cfg.title_column, "") or "").strip()
+            text = str(row.get(self.cfg.text_column, "") or "").strip()
+            query = str(row.get(self.cfg.query_column, "") or "").strip()
+            if not text or not query:
+                continue
+
+            title_for_id = title or "untitled"
+            doc_id = f"{title_for_id}::{stable_hash_str(text, 8)}"
+            if doc_id not in corpus_by_doc_id:
+                corpus_by_doc_id[doc_id] = {
+                    "doc_id": doc_id,
+                    "title": title,
+                    "text": text,
+                    "metadata": {
+                        "source_path": str(source),
+                        "source_dataset": self.cfg.name,
+                    },
+                }
+
+            raw_qid = str(row.get(self.cfg.id_column, "") or "").strip()
+            query_id = raw_qid or f"{self.cfg.name}-{row_idx}"
+            if query_id in seen_query_ids:
+                query_id = f"{query_id}::{row_idx}"
+            seen_query_ids.add(query_id)
+
+            answers = _coerce_gold_answers(row.get(self.cfg.answer_column, ""))
+            query_records.append(
+                {
+                    "query_id": query_id,
+                    "query": query,
+                    "gold_answer": answers[0] if answers else "",
+                    "gold_answers": answers,
+                    "gold_doc_ids": [doc_id],
+                    "gold_chunk_ids": [],
+                    "metadata": {
+                        "title": title,
+                        "source_path": str(source),
+                        "source_row": int(row_idx),
+                    },
+                }
+            )
+            qrel_records.append({"query_id": query_id, "doc_id": doc_id, "relevance": 1})
+
+        return (
+            pd.DataFrame(corpus_by_doc_id.values()),
+            pd.DataFrame(query_records),
+            pd.DataFrame(qrel_records),
         )
 
 
@@ -364,6 +482,8 @@ class FixtureLoader(DatasetLoader):
 def get_loader(cfg: DatasetConfig, raw_dir: Path) -> DatasetLoader:
     mapping = {
         "squad": SquadLoader,
+        "squad_selected": CsvQaLoader,
+        "csv_qa": CsvQaLoader,
         "natural_questions": NaturalQuestionsLoader,
         "multihop_rag": MultiHopRagLoader,
         "fixture": FixtureLoader,

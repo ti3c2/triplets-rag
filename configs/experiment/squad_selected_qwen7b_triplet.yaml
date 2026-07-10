@@ -1,0 +1,36 @@
+# @package _global_
+defaults:
+  - /dataset: squad_selected_csv
+  - /chunking: whole_doc_8192
+  - /generator: qwen_2_5_32b_local
+  - /embedder: jina_v3_local
+  - /indexer: faiss_flat_triplets
+  - /retriever: triplet_top_2
+  - /student: qwen_2_5_7b_local
+  - /inference_strategy: triplet
+  - /metrics: lexical_only
+  - _self_
+
+experiment_name: squad_selected_qwen7b_triplet
+seed: 42
+
+budget:
+  total_context_items: 10
+  num_triplets: 2
+  per_triplet_contexts: 5
+  matching_mode: item
+
+preprocessing:
+  num_questions_per_chunk: 5
+  question_prompt: complex
+  answer_prompt: rag_default
+  max_questions_total: null
+  dedupe_questions: true
+  dedupe_threshold: 0.95
+
+filtering:
+  enabled: false
+  faithfulness_threshold: 0.7
+  judge_model: null
+
+notes: "Local squad_selected CSV, Qwen2.5-32B teacher, Qwen2.5-7B student, triplet RAG q2q retrieval, 2x5 matched item budget, whole-doc chunks, lexical/retrieval metrics inline; run eval-ragas separately with Qwen2.5-32B-Instruct-AWQ."

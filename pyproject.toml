@@ -32,6 +32,8 @@ dependencies = [
     "evaluate>=0.4",
     "rouge-score>=0.1.2",
     "nltk>=3.8",
+    "rapidfuzz>=3.9",
+    "sacrebleu>=2.4",
     "scipy>=1.12",
     # Templating
     "jinja2>=3.1",

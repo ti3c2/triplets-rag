@@ -1,0 +1,12 @@
+# @package dataset
+name: squad_selected
+split: validation
+source_path: ./storage/raw/squad_selected/squad_selected.csv
+id_column: id
+title_column: title
+text_column: text
+query_column: query
+answer_column: answer
+max_queries: null
+max_documents: null
+seed: 42

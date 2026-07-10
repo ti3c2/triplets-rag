@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,13 +49,23 @@ class Settings(BaseSettings):
 
     # --- Concurrency ---
     llm_concurrency: int = Field(default=8, alias="TRIPLET_RAG_LLM_CONCURRENCY")
-    embed_batch_size: int = Field(default=64, alias="TRIPLET_RAG_EMBED_BATCH_SIZE")
+    question_gen_concurrency: int | None = Field(
+        default=None, alias="TRIPLET_RAG_QUESTION_GEN_CONCURRENCY"
+    )
+    embed_batch_size: int | None = Field(default=None, alias="TRIPLET_RAG_EMBED_BATCH_SIZE")
 
     # --- vLLM lifecycle ---
     vllm_health_timeout_sec: int = Field(default=300, alias="TRIPLET_RAG_VLLM_HEALTH_TIMEOUT_SEC")
     vllm_gpu_memory_utilization: float = Field(
         default=0.9, alias="TRIPLET_RAG_VLLM_GPU_MEMORY_UTILIZATION"
     )
+
+    @field_validator("question_gen_concurrency", "embed_batch_size", mode="before")
+    @classmethod
+    def _empty_string_as_none(cls, value):
+        if value == "":
+            return None
+        return value
 
     # --- Convenience computed paths ---
     @property

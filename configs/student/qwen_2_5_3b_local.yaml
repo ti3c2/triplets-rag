@@ -1,0 +1,8 @@
+# @package student
+# Externally-managed OpenAI-compatible vLLM server (VLLM_BASE_URL in .env).
+kind: vllm
+model_name: Qwen/Qwen2.5-3B-Instruct
+base_url: null
+temperature: 0.0
+max_tokens: 256
+top_p: 1.0

@@ -1,0 +1,36 @@
+# @package metrics
+retrieval_metrics:
+  - nDCG@10
+  - RR
+  - R@5
+  - R@10
+  - R@20
+  - P@1
+  - P@5
+  - P@10
+  - P@20
+generation_lexical:
+  - em
+  - f1
+  - rouge_l
+use_ragas: true
+ragas_metrics:
+  - faithfulness
+  - nv_accuracy
+  - nv_response_groundedness
+  - nv_context_relevance
+  - factual_correctness
+  - rouge_score
+  - bleu_score
+  - non_llm_string_similarity
+  - string_present
+  - exact_match
+judge_model:
+  kind: vllm
+  model_name: Qwen/Qwen2.5-32B-Instruct-AWQ
+  base_url: null
+  temperature: 0.0
+  max_tokens: 1024
+  top_p: 1.0
+bootstrap_n: 1000
+bootstrap_seed: 12345

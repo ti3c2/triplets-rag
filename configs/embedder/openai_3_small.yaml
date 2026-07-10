@@ -1,6 +1,7 @@
 # @package embedder
 kind: openai_embed
 model_name: text-embedding-3-small
+base_url: null
 batch_size: 128
 normalize: true
 dim: 1536

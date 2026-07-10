@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from loguru import logger
 
 from ..config import ExperimentConfig, IndexingStrategy, InferenceStrategy
@@ -25,15 +24,13 @@ from ..evaluate import (
     compute_retrieval_metrics,
 )
 from ..index import build_index_for_strategy, index_exists, load_bundle, save_bundle
-from ..index.store import build_faiss
 from ..infer import run_inference
-from ..models import EmbedderClient, ManagedEmbedder, ManagedLLM
+from ..models import ManagedEmbedder, ManagedLLM
 from ..preprocess import build_triplets, filter_triplets, generate_questions
 from ..settings import get_settings
 from ..utils.io import (
     has_success,
     read_jsonl,
-    read_json,
     read_parquet,
     touch_success,
     write_json,
@@ -62,7 +59,7 @@ class _PathSet:
     status_path: Path
 
     @classmethod
-    def from_cfg(cls, cfg: ExperimentConfig) -> "_PathSet":
+    def from_cfg(cls, cfg: ExperimentConfig) -> _PathSet:
         s = get_settings()
         art = cfg.artifact_dir(s.storage_dir)
         idx = cfg.index_dir(s.storage_dir)
@@ -148,8 +145,17 @@ def phase_generate_questions(cfg: ExperimentConfig, paths: _PathSet, force: bool
         return
     chunks = read_parquet(paths.chunks_path)
     lifecycle_log = paths.exp_dir / "logs" / "model_lifecycle.log"
+    question_gen_concurrency = get_settings().question_gen_concurrency
+    if question_gen_concurrency is not None:
+        logger.info(f"[phase: generate_questions] concurrency={question_gen_concurrency}")
     with ManagedLLM(cfg.generator, lifecycle_log=lifecycle_log) as teacher:
-        questions = generate_questions(chunks, teacher, cfg.generator, cfg.preprocessing)
+        questions = generate_questions(
+            chunks,
+            teacher,
+            cfg.generator,
+            cfg.preprocessing,
+            concurrency=question_gen_concurrency,
+        )
     write_parquet(questions, paths.questions_path)
     touch_success(_phase_success(paths.art_dir, "questions"), {"n_questions": len(questions)})
 

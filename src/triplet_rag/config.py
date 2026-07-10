@@ -32,11 +32,27 @@ class _Frozen(BaseModel):
 
 
 class DatasetConfig(_Frozen):
-    name: Literal["squad", "natural_questions", "multihop_rag", "fixture"]
+    name: Literal[
+        "squad", "natural_questions", "multihop_rag", "fixture", "squad_selected", "csv_qa"
+    ]
     split: str = "validation"
     max_queries: int | None = None  # for pilots
     max_documents: int | None = None
     seed: int = 42
+    # For local CSV QA datasets. The file is expected to contain one row per
+    # question with a source passage, question, and reference answer.
+    source_path: str | None = None
+    id_column: str = "id"
+    title_column: str = "title"
+    text_column: str = "text"
+    query_column: str = "query"
+    answer_column: str = "answer"
+
+    @model_validator(mode="after")
+    def _check_csv_source(self) -> DatasetConfig:
+        if self.name in {"squad_selected", "csv_qa"} and not self.source_path:
+            raise ValueError(f"dataset {self.name!r} requires source_path")
+        return self
 
 
 # ---------- Chunking ----------
@@ -66,6 +82,7 @@ class LLMConfig(_Frozen):
 
     kind: Literal["openai", "anthropic", "vllm", "local_hf"]
     model_name: str
+    base_url: str | None = None  # OpenAI-compatible endpoint override
     temperature: float = 0.0
     max_tokens: int = 1024
     top_p: float = 1.0
@@ -80,6 +97,7 @@ class LLMConfig(_Frozen):
 class EmbedderConfig(_Frozen):
     kind: Literal["sentence_transformers", "openai_embed", "openai_compatible"]
     model_name: str
+    base_url: str | None = None  # OpenAI-compatible endpoint override
     batch_size: int = 64
     normalize: bool = True
     # OpenAI embedding dim if applicable; for sbert it's read from model
@@ -199,6 +217,26 @@ class MetricsConfig(_Frozen):
     bootstrap_seed: int = 12345
 
 
+def _hashable_payload(value: Any) -> Any:
+    """Return config data with runtime-only transport fields removed.
+
+    Endpoint URLs are useful in saved configs for reproducibility, but they
+    should not change artifact reuse. The model identity still comes from
+    `kind` + `model_name` + generation params.
+    """
+    if isinstance(value, BaseModel):
+        return _hashable_payload(value.model_dump())
+    if isinstance(value, dict):
+        return {
+            key: _hashable_payload(item)
+            for key, item in value.items()
+            if key not in {"base_url"}
+        }
+    if isinstance(value, list):
+        return [_hashable_payload(item) for item in value]
+    return value
+
+
 # ---------- Top-level ----------
 
 
@@ -231,10 +269,10 @@ class ExperimentConfig(_Frozen):
         return {
             "dataset": self.dataset.model_dump(),
             "chunking": self.chunking.model_dump(),
-            "generator": self.generator.model_dump(),
-            "embedder": self.embedder.model_dump(),
+            "generator": _hashable_payload(self.generator),
+            "embedder": _hashable_payload(self.embedder),
             "preprocessing": self.preprocessing.model_dump(),
-            "filtering": self.filtering.model_dump(),
+            "filtering": _hashable_payload(self.filtering),
             "seed": self.seed,
         }
 
@@ -250,10 +288,10 @@ class ExperimentConfig(_Frozen):
             "preprocessing_hash": self.preprocessing_hash,
             "index_hash": self.index_hash,
             "retriever": self.retriever.model_dump(),
-            "student": self.student.model_dump(),
+            "student": _hashable_payload(self.student),
             "inference": self.inference.model_dump(),
             "budget": self.budget.model_dump(),
-            "metrics": self.metrics.model_dump(),
+            "metrics": _hashable_payload(self.metrics),
             "seed": self.seed,
         }
 

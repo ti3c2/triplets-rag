@@ -70,6 +70,8 @@ class LLMClient:
         if cfg.kind == "openai":
             self._model_str = cfg.model_name  # e.g. "gpt-4o-mini"
             self._extra: dict[str, Any] = {"api_key": s.openai_api_key}
+            if cfg.base_url:
+                self._extra["api_base"] = cfg.base_url
         elif cfg.kind == "anthropic":
             # litellm prefers "anthropic/claude-..."
             mn = cfg.model_name
@@ -84,7 +86,7 @@ class LLMClient:
                 mn = f"openai/{mn}"
             self._model_str = mn
             self._extra = {
-                "api_base": s.vllm_base_url,
+                "api_base": cfg.base_url or s.vllm_base_url,
                 "api_key": s.vllm_api_key,
             }
         else:

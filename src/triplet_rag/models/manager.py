@@ -55,21 +55,15 @@ class ManagedLLM:
             self._server = VLLMServer(self.cfg)
             self._server.start()
             # Build a synthetic LLMConfig of kind=vllm pointing at this port
-            from ..config import LLMConfig as LC
-
-            client_cfg = LC(
+            client_cfg = LLMConfig(
                 kind="vllm",
                 model_name=self.cfg.model_name,
+                base_url=self._server.base_url,
                 temperature=self.cfg.temperature,
                 max_tokens=self.cfg.max_tokens,
                 top_p=self.cfg.top_p,
                 vllm_port=self.cfg.vllm_port,
             )
-            # Override base url for this client
-            from ..settings import get_settings
-
-            s = get_settings()
-            s.vllm_base_url = self._server.base_url  # local override
             self._client = LLMClient(client_cfg)
         else:
             self._client = LLMClient(self.cfg)

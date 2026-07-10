@@ -311,7 +311,8 @@ def eval_ragas_cmd(
         help="Comma-separated RAGAS metric names. "
         "Supported: faithfulness, answer_relevancy, answer_correctness, "
         "context_precision, context_recall, nv_accuracy, "
-        "nv_response_groundedness, nv_context_relevance.",
+        "nv_response_groundedness, nv_context_relevance, factual_correctness, "
+        "rouge_score, bleu_score, non_llm_string_similarity, string_present, exact_match.",
     ),
     judge_tag: Optional[str] = typer.Option(
         None,
@@ -337,8 +338,7 @@ def eval_ragas_cmd(
     max_workers: Optional[int] = typer.Option(
         None,
         "--max-workers",
-        help="Parallel RAGAS workers (ragas RunConfig.max_workers). "
-        "Default: ragas built-in (16).",
+        help="Parallel RAGAS workers (ragas RunConfig.max_workers). Default: ragas built-in (16).",
     ),
     timeout: Optional[int] = typer.Option(
         None,
@@ -419,9 +419,7 @@ def eval_ragas_cmd(
     if ks_list is not None:
         console.print(f"[bold]ks (override):[/bold] {ks_list or 'single-pass'}")
     if max_workers is not None or timeout is not None:
-        console.print(
-            f"[bold]RunConfig:[/bold] max_workers={max_workers}, timeout={timeout}"
-        )
+        console.print(f"[bold]RunConfig:[/bold] max_workers={max_workers}, timeout={timeout}")
     if debug:
         console.print("[yellow]debug=True (judge prompts will be printed)[/yellow]")
 

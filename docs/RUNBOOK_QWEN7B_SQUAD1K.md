@@ -43,6 +43,9 @@ EMBEDDER_API_KEY=EMPTY
 TRIPLET_RAG_STORAGE_DIR=./storage
 # Optional but useful while a 7B is the bottleneck:
 TRIPLET_RAG_LLM_CONCURRENCY=16
+# Optional: throttle only teacher question generation. If unset, it falls
+# back to TRIPLET_RAG_LLM_CONCURRENCY.
+TRIPLET_RAG_QUESTION_GEN_CONCURRENCY=8
 ```
 
 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` are **not required** — every LLM

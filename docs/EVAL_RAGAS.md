@@ -55,6 +55,12 @@ Pass any subset to `--metrics`, comma-separated.
 | `context_precision`            | Judge-rated precision of retrieved contexts.                                      | When qrels are weak/absent        |
 | `context_recall`               | Judge-rated recall of retrieved contexts vs gold.                                 | When qrels are weak/absent        |
 | `nv_context_relevance`         | NVIDIA context-relevance prompt.                                                   | Free-form / no qrels              |
+| `factual_correctness`          | Claim decomposition + NLI against the reference answer.                            | Reference-answer QA               |
+| `rouge_score`                  | RAGAS ROUGE-L F-measure against the reference.                                     | Reference-answer QA               |
+| `bleu_score`                   | RAGAS BLEU against the reference.                                                   | Reference-answer QA               |
+| `non_llm_string_similarity`    | Normalized non-LLM string similarity against the reference.                        | Reference-answer QA               |
+| `string_present`               | Whether the reference string appears in the response.                              | Extractive QA                     |
+| `exact_match`                  | Exact response/reference string match.                                             | Extractive QA                     |
 
 For SQuAD: `faithfulness` and `nv_response_groundedness` are the load-bearing
 ones. `answer_correctness` / `nv_accuracy` add cost without much signal beyond
@@ -74,10 +80,15 @@ For per-k evaluation (below) we partition the metric set:
 | `answer_relevancy`           | no             |
 | `answer_correctness`         | no             |
 | `nv_accuracy`                | no             |
+| `factual_correctness`        | no             |
+| `rouge_score`                | no             |
+| `bleu_score`                 | no             |
+| `non_llm_string_similarity`  | no             |
+| `string_present`             | no             |
+| `exact_match`                | no             |
 
 Context-dependent metrics are replicated per retrieval-k; context-free metrics
-run exactly once. An unknown metric is treated as context-free (single pass)
-so it doesn't get pointlessly multiplied across k.
+run exactly once. Unknown metrics are skipped with a warning.
 
 ## Common invocations
 
@@ -129,6 +140,18 @@ It still uses **OpenAI embeddings** (`text-embedding-3-small`) regardless of
 the judge LLM. If you want a fully offline run, drop `answer_relevancy` from
 `--metrics` (it's a sanity-check metric on free-form data anyway, and noise on
 SQuAD).
+
+### 2b. Self-hosted Qwen2.5-32B-AWQ judge with the local QA metric set
+
+```bash
+uv run triplet-rag eval-ragas <id> \
+    --judge-model vllm:Qwen/Qwen2.5-32B-Instruct-AWQ \
+    --base-url http://localhost:7114/v1 \
+    --metrics faithfulness,nv_accuracy,nv_response_groundedness,nv_context_relevance,factual_correctness,rouge_score,bleu_score,non_llm_string_similarity,string_present,exact_match
+```
+
+This metric set does not request `answer_relevancy` or `answer_correctness`, so
+the rerunner does not initialize OpenAI embeddings.
 
 ### 3. Compare two judges on the same experiment
 
