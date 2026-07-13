@@ -308,7 +308,6 @@ async def _evaluate_ragas_batch(
     df = result.to_pandas()
     df["query_id"] = [row["query_id"] for row in rows]
     df["__metric_suffix"] = [row.get("__metric_suffix", "") for row in rows]
-    df["__emit_context_free"] = [row.get("__emit_context_free", True) for row in rows]
 
     result_cols: dict[str, str] = {}
     df_columns = list(df.columns)
@@ -327,12 +326,6 @@ async def _evaluate_ragas_batch(
     for _, row in df.iterrows():
         suffix = str(row.get("__metric_suffix") or "")
         for col, metric_name in result_cols.items():
-            if (
-                suffix
-                and metric_name not in CONTEXT_DEPENDENT_RAGAS_METRICS
-                and not bool(row.get("__emit_context_free", True))
-            ):
-                continue
             value = row[col]
             try:
                 score = float(value)
@@ -464,41 +457,8 @@ def compute_ragas_metrics(
                         }
                     )
         elif single_evaluate:
-            if context_dependent:
-                first_k = normalized_ks[0]
-                rows = []
-                for k in normalized_ks:
-                    for pred in predictions:
-                        row = _prediction_to_ragas_row(pred, context_k=k)
-                        row["__metric_suffix"] = f"@{k}"
-                        row["__emit_context_free"] = k == first_k
-                        rows.append(row)
-                        if input_dump_path is not None:
-                            dump_records.append(
-                                {
-                                    "ragas_run": f"context_at_{k}",
-                                    "ragas_metrics": requested_names,
-                                    "context_k": k,
-                                    **_strip_internal_ragas_fields(row),
-                                }
-                            )
-                prepared_batches.append(("all_metrics_by_k", requested_names, rows))
-            else:
-                rows = [_prediction_to_ragas_row(pred) for pred in predictions]
-                prepared_batches.append(("all_contexts", requested_names, rows))
-                if input_dump_path is not None:
-                    for row in rows:
-                        dump_records.append(
-                            {
-                                "ragas_run": "all_contexts",
-                                "ragas_metrics": requested_names,
-                                "context_k": None,
-                                **row,
-                            }
-                        )
-        else:
             if context_free:
-                rows = [_prediction_to_ragas_row(pred) for pred in predictions]
+                rows = [_prediction_to_ragas_row(pred, context_k=0) for pred in predictions]
                 prepared_batches.append(("context_free", context_free, rows))
                 if input_dump_path is not None:
                     for row in rows:
@@ -526,13 +486,38 @@ def compute_ragas_metrics(
                                     **_strip_internal_ragas_fields(row),
                                 }
                             )
-                prepared_batches.append(
-                    (
-                        "context_dependent_by_k",
-                        context_dependent,
-                        rows,
-                    )
-                )
+                prepared_batches.append(("context_dependent_by_k", context_dependent, rows))
+        else:
+            if context_free:
+                rows = [_prediction_to_ragas_row(pred, context_k=0) for pred in predictions]
+                prepared_batches.append(("context_free", context_free, rows))
+                if input_dump_path is not None:
+                    for row in rows:
+                        dump_records.append(
+                            {
+                                "ragas_run": "context_free",
+                                "ragas_metrics": context_free,
+                                "context_k": None,
+                                **row,
+                            }
+                        )
+            if context_dependent:
+                for k in normalized_ks:
+                    rows = []
+                    for pred in predictions:
+                        row = _prediction_to_ragas_row(pred, context_k=k)
+                        row["__metric_suffix"] = f"@{k}"
+                        rows.append(row)
+                        if input_dump_path is not None:
+                            dump_records.append(
+                                {
+                                    "ragas_run": f"context_at_{k}",
+                                    "ragas_metrics": context_dependent,
+                                    "context_k": k,
+                                    **_strip_internal_ragas_fields(row),
+                                }
+                            )
+                    prepared_batches.append((f"context_at_{k}", context_dependent, rows))
 
         if not prepared_batches:
             return {}, pd.DataFrame()

@@ -108,10 +108,11 @@ def run_ragas_on_experiment(
     Per-k evaluation: context-dependent metrics (faithfulness, context_*,
     nv_response_groundedness, nv_context_relevance) are replicated for each k
     in `ks` with truncated contexts; results are suffixed `<metric>@<k>`.
-    By default, all requested metrics and prepared rows are evaluated in one
-    RAGAS call so RAGAS can keep its worker queue full. `ks=None` auto-derives from
-    `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`; passing `ks=[]`
-    explicitly disables per-k.
+    By default, context-free metrics run once and context-dependent rows for
+    all k values are merged into one RAGAS call so RAGAS can keep its worker
+    queue full without recomputing answer-only metrics. `ks=None` auto-derives
+    from `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`; passing
+    `ks=[]` explicitly disables per-k.
 
     Returns the aggregate dict and the output directory.
     """

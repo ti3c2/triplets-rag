@@ -173,18 +173,23 @@ def test_compute_ragas_metrics_runs_context_metrics_per_k(tmp_path, monkeypatch)
 
     assert set(agg) == {"answer_correctness", "faithfulness@1", "faithfulness@2"}
     assert set(per_query["metric"].unique()) == set(agg)
-    assert [call["metrics"] for call in calls] == [["faithfulness", "answer_correctness"]]
-    assert len(calls[0]["rows"]) == 4
-    assert calls[0]["rows"][0]["retrieved_contexts"] == ["c1"]
-    assert calls[0]["rows"][2]["retrieved_contexts"] == ["c1", "c2"]
+    assert [call["metrics"] for call in calls] == [["answer_correctness"], ["faithfulness"]]
+    assert len(calls[0]["rows"]) == 2
+    assert calls[0]["rows"][0]["retrieved_contexts"] == []
+    assert len(calls[1]["rows"]) == 4
+    assert calls[1]["rows"][0]["retrieved_contexts"] == ["c1"]
+    assert calls[1]["rows"][2]["retrieved_contexts"] == ["c1", "c2"]
     assert all(call["run_config"].max_workers == 3 for call in calls)
     assert all(call["run_config"].timeout == 45 for call in calls)
 
     dumped = list(read_jsonl(dump_path))
-    assert len(dumped) == 4
-    assert dumped[0]["ragas_run"] == "context_at_1"
-    assert dumped[0]["ragas_metrics"] == ["faithfulness", "answer_correctness"]
-    assert dumped[0]["retrieved_contexts"] == ["c1"]
+    assert len(dumped) == 6
+    assert dumped[0]["ragas_run"] == "context_free"
+    assert dumped[0]["ragas_metrics"] == ["answer_correctness"]
+    assert dumped[0]["retrieved_contexts"] == []
+    assert dumped[2]["ragas_run"] == "context_at_1"
+    assert dumped[2]["ragas_metrics"] == ["faithfulness"]
+    assert dumped[2]["retrieved_contexts"] == ["c1"]
 
 
 def test_compute_ragas_metrics_can_partition_context_metrics_per_k(monkeypatch):
@@ -224,11 +229,16 @@ def test_compute_ragas_metrics_can_partition_context_metrics_per_k(monkeypatch):
 
     assert set(agg) == {"answer_correctness", "faithfulness@1", "faithfulness@2"}
     assert set(per_query["metric"].unique()) == set(agg)
-    assert [call["metrics"] for call in calls] == [["answer_correctness"], ["faithfulness"]]
-    assert calls[0]["rows"][0]["retrieved_contexts"] == ["c1", "c2", "c3"]
-    assert len(calls[1]["rows"]) == 4
+    assert [call["metrics"] for call in calls] == [
+        ["answer_correctness"],
+        ["faithfulness"],
+        ["faithfulness"],
+    ]
+    assert calls[0]["rows"][0]["retrieved_contexts"] == []
+    assert len(calls[1]["rows"]) == 2
     assert calls[1]["rows"][0]["retrieved_contexts"] == ["c1"]
-    assert calls[1]["rows"][2]["retrieved_contexts"] == ["c1", "c2"]
+    assert len(calls[2]["rows"]) == 2
+    assert calls[2]["rows"][0]["retrieved_contexts"] == ["c1", "c2"]
 
 
 def test_compute_ragas_metrics_supports_reference_metric_names(monkeypatch):

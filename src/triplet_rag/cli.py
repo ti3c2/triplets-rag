@@ -16,9 +16,7 @@ when you want a multi-subcommand tool.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -33,6 +31,23 @@ from .utils.logging import setup_logging
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
+
+CONFIG_OPTION = typer.Option(
+    ..., "--config", "-c", help="Config name, e.g. experiment/fixture_smoke"
+)
+OVERRIDE_OPTION = typer.Option(
+    [],
+    "--override",
+    "-o",
+    help="Hydra-style override, e.g. budget.num_triplets=3 (repeatable)",
+)
+LIST_FILTER_OPTION = typer.Option([], "--filter", help="key=value filters")
+REPORT_FILTER_OPTION = typer.Option([], "--filter", help="key=value filters")
+REPORT_METRICS_OPTION = typer.Option(
+    "em,f1,rouge_l,faithfulness,answer_correctness",
+    "--metrics",
+    help="comma-separated metric column names",
+)
 
 
 def _load_config(config: str, overrides: list[str] | None = None) -> ExperimentConfig:
@@ -68,15 +83,8 @@ def _load_config(config: str, overrides: list[str] | None = None) -> ExperimentC
 
 @app.command()
 def run(
-    config: str = typer.Option(
-        ..., "--config", "-c", help="Config name, e.g. experiment/fixture_smoke"
-    ),
-    override: list[str] = typer.Option(
-        [],
-        "--override",
-        "-o",
-        help="Hydra-style override, e.g. budget.num_triplets=3 (repeatable)",
-    ),
+    config: str = CONFIG_OPTION,
+    override: list[str] = OVERRIDE_OPTION,
     force: bool = typer.Option(False, "--force", "-f", help="Force re-run all phases"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print resolved config and exit"),
 ) -> None:
@@ -152,7 +160,7 @@ def _filters_from_strs(filter_strs: list[str]) -> dict[str, str]:
 
 @app.command(name="list")
 def list_cmd(
-    filter: list[str] = typer.Option([], "--filter", help="key=value filters"),
+    filter: list[str] = LIST_FILTER_OPTION,
 ) -> None:
     """List registered experiments."""
     s = get_settings()
@@ -195,12 +203,8 @@ def list_cmd(
 
 @app.command()
 def report(
-    filter: list[str] = typer.Option([], "--filter", help="key=value filters"),
-    metrics: str = typer.Option(
-        "em,f1,rouge_l,faithfulness,answer_correctness",
-        "--metrics",
-        help="comma-separated metric column names",
-    ),
+    filter: list[str] = REPORT_FILTER_OPTION,
+    metrics: str = REPORT_METRICS_OPTION,
 ) -> None:
     """Side-by-side comparison of experiments matching the filter."""
     s = get_settings()
@@ -314,19 +318,19 @@ def eval_ragas_cmd(
         "nv_response_groundedness, nv_context_relevance, factual_correctness, "
         "rouge_score, bleu_score, non_llm_string_similarity, string_present, exact_match.",
     ),
-    judge_tag: Optional[str] = typer.Option(
+    judge_tag: str | None = typer.Option(
         None,
         "--judge-tag",
         help="Folder label for this run; defaults to the sanitized model name.",
     ),
-    base_url: Optional[str] = typer.Option(
+    base_url: str | None = typer.Option(
         None,
         "--base-url",
         help="OpenAI-compatible endpoint for the judge "
         "(e.g. http://localhost:7114/v1 for a self-hosted vLLM). "
         "Required when kind=vllm and the host differs from VLLM_BASE_URL.",
     ),
-    api_key: Optional[str] = typer.Option(
+    api_key: str | None = typer.Option(
         None,
         "--api-key",
         help="API key for the judge endpoint. "
@@ -335,12 +339,12 @@ def eval_ragas_cmd(
     temperature: float = typer.Option(0.0, "--temperature"),
     max_tokens: int = typer.Option(1024, "--max-tokens"),
     force: bool = typer.Option(False, "--force", "-f"),
-    max_workers: Optional[int] = typer.Option(
+    max_workers: int | None = typer.Option(
         None,
         "--max-workers",
         help="Parallel RAGAS workers (ragas RunConfig.max_workers). Default: ragas built-in (16).",
     ),
-    timeout: Optional[int] = typer.Option(
+    timeout: int | None = typer.Option(
         None,
         "--timeout",
         help="Per-call timeout in seconds (ragas RunConfig.timeout). "
@@ -358,7 +362,7 @@ def eval_ragas_cmd(
         "metrics/ragas/<tag>/inputs/. Default single-evaluate mode writes "
         "ragas_inputs.jsonl.",
     ),
-    ks: Optional[str] = typer.Option(
+    ks: str | None = typer.Option(
         None,
         "--ks",
         help="Comma-separated retrieval ks at which to replicate "
@@ -369,8 +373,9 @@ def eval_ragas_cmd(
     separate_scopes: bool = typer.Option(
         False,
         "--separate-scopes",
-        help="Run context-free and context-dependent RAGAS scopes separately. "
-        "Default is one whole-set RAGAS call for better worker utilization.",
+        help="Run each context-dependent k scope as a separate RAGAS call. "
+        "Default merges all k rows for context-dependent metrics while "
+        "evaluating context-free metrics once.",
     ),
 ) -> None:
     """Run RAGAS on a completed experiment's predictions.
@@ -405,7 +410,7 @@ def eval_ragas_cmd(
     # --ks: None  → auto-derive from experiment config
     # --ks ""     → explicit empty list (single un-suffixed pass)
     # --ks "5,10" → parse
-    ks_list: Optional[list[int]] = None
+    ks_list: list[int] | None = None
     if ks is not None:
         ks_list = []
         for piece in ks.split(","):
@@ -429,7 +434,7 @@ def eval_ragas_cmd(
     if debug:
         console.print("[yellow]debug=True (judge prompts will be printed)[/yellow]")
     console.print(
-        f"[bold]RAGAS mode:[/bold] {'separate scopes' if separate_scopes else 'single whole-set evaluate'}"
+        f"[bold]RAGAS mode:[/bold] {'separate k scopes' if separate_scopes else 'merged k scopes'}"
     )
 
     try:
@@ -450,7 +455,7 @@ def eval_ragas_cmd(
         )
     except FileExistsError as e:
         typer.echo(str(e), err=True)
-        raise typer.Exit(2)
+        raise typer.Exit(2) from None
 
     console.print(f"\n[green]done[/green] -> {out_dir}")
     console.print("\n[bold]RAGAS aggregate (means):[/bold]")
