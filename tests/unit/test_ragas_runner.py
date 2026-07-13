@@ -62,7 +62,6 @@ def _stub_compute(monkeypatch, value: float) -> None:
         timeout=None,
         debug=False,
         dump_path=None,
-        single_evaluate=True,
     ):
         rows = []
         agg = {}
@@ -190,13 +189,11 @@ def test_base_url_threaded_through(tmp_path, monkeypatch):
         timeout=None,
         debug=False,
         dump_path=None,
-        single_evaluate=True,
     ):
         captured["base_url"] = judge_base_url
         captured["api_key"] = judge_api_key
         captured["judge_kind"] = cfg.judge_model.kind if cfg.judge_model else None
         captured["judge_model"] = cfg.judge_model.model_name if cfg.judge_model else None
-        captured["single_evaluate"] = single_evaluate
         rows = [
             {"query_id": p["query_id"], "metric": "faithfulness", "value": 0.5} for p in predictions
         ]
@@ -216,49 +213,9 @@ def test_base_url_threaded_through(tmp_path, monkeypatch):
     assert captured["api_key"] == "EMPTY"
     assert captured["judge_kind"] == "vllm"
     assert captured["judge_model"] == "Qwen/Qwen2.5-32B-Instruct"
-    assert captured["single_evaluate"] is True
 
     # judge.json + runs.json record the endpoint
     judge_json = read_json(exp / "metrics" / "ragas" / "Qwen_Qwen2.5-32B-Instruct" / "judge.json")
     assert judge_json["judge_base_url"] == "http://localhost:7114/v1"
     runs = read_json(exp / "metrics" / "ragas" / "runs.json")
     assert runs["Qwen_Qwen2.5-32B-Instruct"]["judge_base_url"] == "http://localhost:7114/v1"
-
-
-def test_can_request_partitioned_ragas_scopes(tmp_path, monkeypatch):
-    exp = tmp_path / "exp_partitioned"
-    exp.mkdir()
-    _make_predictions(exp)
-    captured = {}
-
-    def _fake(
-        predictions,
-        cfg,
-        *,
-        judge_base_url=None,
-        judge_api_key=None,
-        context_ks=None,
-        max_workers=None,
-        timeout=None,
-        debug=False,
-        dump_path=None,
-        single_evaluate=True,
-    ):
-        captured["single_evaluate"] = single_evaluate
-        rows = [
-            {"query_id": p["query_id"], "metric": "faithfulness", "value": 0.5} for p in predictions
-        ]
-        return {"faithfulness": 0.5}, pd.DataFrame(rows)
-
-    monkeypatch.setattr(ragas_runner, "compute_ragas_metrics", _fake)
-
-    ragas_runner.run_ragas_on_experiment(
-        exp_dir=exp,
-        judge_cfg=LLMConfig(kind="openai", model_name="gpt-4o"),
-        metric_names=["faithfulness"],
-        single_evaluate=False,
-    )
-
-    assert captured["single_evaluate"] is False
-    judge_json = read_json(exp / "metrics" / "ragas" / "gpt-4o" / "judge.json")
-    assert judge_json["single_evaluate"] is False

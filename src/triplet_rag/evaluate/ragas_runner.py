@@ -97,7 +97,6 @@ def run_ragas_on_experiment(
     debug: bool = False,
     dump_inputs: bool = False,
     ks: list[int] | None = None,
-    single_evaluate: bool = True,
 ) -> tuple[dict[str, float], Path]:
     """Run RAGAS over `exp_dir/predictions.jsonl` and persist results.
 
@@ -108,11 +107,13 @@ def run_ragas_on_experiment(
     Per-k evaluation: context-dependent metrics (faithfulness, context_*,
     nv_response_groundedness, nv_context_relevance) are replicated for each k
     in `ks` with truncated contexts; results are suffixed `<metric>@<k>`.
-    By default, context-free metrics run once and context-dependent rows for
-    all k values are merged into one RAGAS call so RAGAS can keep its worker
-    queue full without recomputing answer-only metrics. `ks=None` auto-derives
-    from `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`; passing
-    `ks=[]` explicitly disables per-k.
+    A single k uses one RAGAS call for judge-backed metrics and, when requested,
+    one additional local-metric call so local/string metrics do not consume
+    judge worker slots. With multiple k values, context-free metrics run once
+    and context-dependent rows for all k values are merged into one additional
+    sequential RAGAS call so we do not recompute answer-only metrics. `ks=None`
+    auto-derives from `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`;
+    passing `ks=[]` explicitly disables per-k.
 
     Returns the aggregate dict and the output directory.
     """
@@ -153,8 +154,7 @@ def run_ragas_on_experiment(
         f"RAGAS rerun on {pred_path.name} with judge {judge_cfg.kind}:"
         f"{judge_cfg.model_name}{endpoint_note} (tag={tag}); "
         f"metrics={metric_names}; ks={resolved_ks or 'single-pass'}; "
-        f"max_workers={max_workers}; timeout={timeout}; debug={debug}; "
-        f"single_evaluate={single_evaluate}"
+        f"max_workers={max_workers}; timeout={timeout}; debug={debug}"
     )
 
     inputs_dir = out_dir / "inputs" if dump_inputs else None
@@ -178,7 +178,6 @@ def run_ragas_on_experiment(
         timeout=timeout,
         debug=debug,
         dump_path=(inputs_dir / "ragas_inputs.jsonl") if inputs_dir else None,
-        single_evaluate=single_evaluate,
     )
 
     if not judge_agg:
@@ -205,7 +204,6 @@ def run_ragas_on_experiment(
             "timeout": timeout,
             "debug": debug,
             "dump_inputs": dump_inputs,
-            "single_evaluate": single_evaluate,
             "n_queries": len(predictions),
             "ran_at": datetime.utcnow().isoformat() + "Z",
         },
