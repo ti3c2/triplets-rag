@@ -10,7 +10,7 @@ from triplet_rag.preprocess.triplet_builder import build_triplets
 
 
 class _ExplodingTeacher:
-    def chat_many(self, *args, **kwargs):
+    async def chat_many_async(self, *args, **kwargs):
         raise AssertionError("teacher should not be called when seed_answer is present")
 
 
@@ -26,7 +26,8 @@ def _chunk_bundle(chunks: pd.DataFrame, embeddings: np.ndarray) -> IndexBundle:
     return IndexBundle(index=index, id_map=id_map)
 
 
-def test_build_triplets_uses_seed_answer_without_teacher_call():
+@pytest.mark.asyncio
+async def test_build_triplets_uses_seed_answer_without_teacher_call():
     chunks = pd.DataFrame(
         [
             {"chunk_id": "c1", "text": "Notre Dame has a copper statue of Christ."},
@@ -46,7 +47,7 @@ def test_build_triplets_uses_seed_answer_without_teacher_call():
     )
     question_embeddings = np.array([[1.0, 0.0]], dtype=np.float32)
 
-    triplets = build_triplets(
+    triplets = await build_triplets(
         questions,
         chunks,
         _chunk_bundle(chunks, embeddings),
@@ -61,13 +62,14 @@ def test_build_triplets_uses_seed_answer_without_teacher_call():
     assert triplets.loc[0, "retrieved_chunk_ids"] == ["c1"]
 
 
-def test_build_triplets_requires_teacher_without_seed_answer():
+@pytest.mark.asyncio
+async def test_build_triplets_requires_teacher_without_seed_answer():
     chunks = pd.DataFrame([{"chunk_id": "c1", "text": "Context"}])
     embeddings = np.array([[1.0]], dtype=np.float32)
     questions = pd.DataFrame([{"question_id": "q1", "chunk_id": "c1", "question": "Question?"}])
 
     with pytest.raises(ValueError, match="seed_answer"):
-        build_triplets(
+        await build_triplets(
             questions,
             chunks,
             _chunk_bundle(chunks, embeddings),

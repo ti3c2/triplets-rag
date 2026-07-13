@@ -7,6 +7,7 @@ judges because multiple judge models can coexist under one experiment.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -274,6 +275,114 @@ def _set_langchain_debug(debug: bool) -> tuple[Any | None, bool | None]:
         return None, None
 
 
+def _strip_internal_ragas_fields(row: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if not k.startswith("__")}
+
+
+async def _evaluate_ragas_batch(
+    *,
+    label: str,
+    metric_names: list[str],
+    rows: list[dict[str, Any]],
+    metric_lookup: dict[str, Any],
+    dataset_cls: Any,
+    aevaluate_fn: Any,
+    judge_llm: Any,
+    embeddings: Any,
+    run_config: Any,
+) -> list[dict[str, Any]]:
+    metrics = [metric_lookup[name] for name in metric_names]
+    logger.info(
+        f"Running RAGAS ({label}) with {len(rows)} rows and metrics: {[m.name for m in metrics]}"
+    )
+    ds = dataset_cls.from_list([_strip_internal_ragas_fields(row) for row in rows])
+    evaluate_kwargs = {
+        "metrics": metrics,
+        "llm": judge_llm,
+        "embeddings": embeddings,
+        "raise_exceptions": False,
+    }
+    if run_config is not None:
+        evaluate_kwargs["run_config"] = run_config
+    result = await aevaluate_fn(ds, **evaluate_kwargs)
+    df = result.to_pandas()
+    df["query_id"] = [row["query_id"] for row in rows]
+    df["__metric_suffix"] = [row.get("__metric_suffix", "") for row in rows]
+    df["__emit_context_free"] = [row.get("__emit_context_free", True) for row in rows]
+
+    result_cols: dict[str, str] = {}
+    df_columns = list(df.columns)
+    for requested_name, metric in zip(metric_names, metrics, strict=True):
+        metric_name = getattr(metric, "name", requested_name)
+        result_col = _find_metric_result_column(df_columns, requested_name, metric_name)
+        if result_col is None:
+            logger.warning(
+                f"RAGAS result missing column for metric '{requested_name}'. "
+                f"Available columns: {df_columns}"
+            )
+            continue
+        result_cols[result_col] = requested_name
+
+    long_rows: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        suffix = str(row.get("__metric_suffix") or "")
+        for col, metric_name in result_cols.items():
+            if (
+                suffix
+                and metric_name not in CONTEXT_DEPENDENT_RAGAS_METRICS
+                and not bool(row.get("__emit_context_free", True))
+            ):
+                continue
+            value = row[col]
+            try:
+                score = float(value)
+            except Exception:
+                continue
+            if pd.isna(score):
+                continue
+            label_name = (
+                f"{metric_name}{suffix}"
+                if suffix and metric_name in CONTEXT_DEPENDENT_RAGAS_METRICS
+                else metric_name
+            )
+            long_rows.append(
+                {
+                    "query_id": row["query_id"],
+                    "metric": label_name,
+                    "value": score,
+                }
+            )
+    return long_rows
+
+
+async def _evaluate_ragas_batches(
+    *,
+    batches: list[tuple[str, list[str], list[dict[str, Any]]]],
+    metric_lookup: dict[str, Any],
+    dataset_cls: Any,
+    aevaluate_fn: Any,
+    judge_llm: Any,
+    embeddings: Any,
+    run_config: Any,
+) -> list[dict[str, Any]]:
+    long_rows: list[dict[str, Any]] = []
+    for label, metric_names, rows in batches:
+        long_rows.extend(
+            await _evaluate_ragas_batch(
+                label=label,
+                metric_names=metric_names,
+                rows=rows,
+                metric_lookup=metric_lookup,
+                dataset_cls=dataset_cls,
+                aevaluate_fn=aevaluate_fn,
+                judge_llm=judge_llm,
+                embeddings=embeddings,
+                run_config=run_config,
+            )
+        )
+    return long_rows
+
+
 def compute_ragas_metrics(
     predictions: list[dict],
     cfg: MetricsConfig,
@@ -286,6 +395,7 @@ def compute_ragas_metrics(
     input_dump_path: Path | None = None,
     debug: bool = False,
     dump_path: Path | None = None,
+    single_evaluate: bool = True,
 ) -> tuple[dict[str, float], pd.DataFrame]:
     """Return (aggregate, per_query_df). Empty if RAGAS is disabled.
 
@@ -303,7 +413,7 @@ def compute_ragas_metrics(
     restore_debug, previous_debug = _set_langchain_debug(debug)
     try:
         from datasets import Dataset
-        from ragas import evaluate
+        from ragas import aevaluate
 
         run_config = _build_run_config(max_workers, timeout)
     except Exception as e:
@@ -330,41 +440,101 @@ def compute_ragas_metrics(
             return {}, pd.DataFrame()
 
         normalized_ks = _normalize_context_ks(context_ks)
-        if normalized_ks is None:
-            eval_specs = [("all_contexts", requested_names, None)]
-        else:
-            context_free = [
-                name for name in requested_names if name not in CONTEXT_DEPENDENT_RAGAS_METRICS
-            ]
-            context_dependent = [
-                name for name in requested_names if name in CONTEXT_DEPENDENT_RAGAS_METRICS
-            ]
-            eval_specs = []
-            if context_free:
-                eval_specs.append(("context_free", context_free, None))
-            for k in normalized_ks:
-                if context_dependent:
-                    eval_specs.append((f"context_at_{k}", context_dependent, k))
-
-        prepared_specs = []
+        prepared_batches: list[tuple[str, list[str], list[dict[str, Any]]]] = []
         dump_records = []
-        for label, metric_names, context_k in eval_specs:
-            rows = [_prediction_to_ragas_row(pred, context_k=context_k) for pred in predictions]
-            if not rows:
-                continue
-            prepared_specs.append((label, metric_names, context_k, rows))
+
+        context_free = [
+            name for name in requested_names if name not in CONTEXT_DEPENDENT_RAGAS_METRICS
+        ]
+        context_dependent = [
+            name for name in requested_names if name in CONTEXT_DEPENDENT_RAGAS_METRICS
+        ]
+
+        if normalized_ks is None:
+            rows = [_prediction_to_ragas_row(pred) for pred in predictions]
+            prepared_batches.append(("all_contexts", requested_names, rows))
             if input_dump_path is not None:
                 for row in rows:
                     dump_records.append(
                         {
-                            "ragas_run": label,
-                            "ragas_metrics": metric_names,
-                            "context_k": context_k,
+                            "ragas_run": "all_contexts",
+                            "ragas_metrics": requested_names,
+                            "context_k": None,
                             **row,
                         }
                     )
+        elif single_evaluate:
+            if context_dependent:
+                first_k = normalized_ks[0]
+                rows = []
+                for k in normalized_ks:
+                    for pred in predictions:
+                        row = _prediction_to_ragas_row(pred, context_k=k)
+                        row["__metric_suffix"] = f"@{k}"
+                        row["__emit_context_free"] = k == first_k
+                        rows.append(row)
+                        if input_dump_path is not None:
+                            dump_records.append(
+                                {
+                                    "ragas_run": f"context_at_{k}",
+                                    "ragas_metrics": requested_names,
+                                    "context_k": k,
+                                    **_strip_internal_ragas_fields(row),
+                                }
+                            )
+                prepared_batches.append(("all_metrics_by_k", requested_names, rows))
+            else:
+                rows = [_prediction_to_ragas_row(pred) for pred in predictions]
+                prepared_batches.append(("all_contexts", requested_names, rows))
+                if input_dump_path is not None:
+                    for row in rows:
+                        dump_records.append(
+                            {
+                                "ragas_run": "all_contexts",
+                                "ragas_metrics": requested_names,
+                                "context_k": None,
+                                **row,
+                            }
+                        )
+        else:
+            if context_free:
+                rows = [_prediction_to_ragas_row(pred) for pred in predictions]
+                prepared_batches.append(("context_free", context_free, rows))
+                if input_dump_path is not None:
+                    for row in rows:
+                        dump_records.append(
+                            {
+                                "ragas_run": "context_free",
+                                "ragas_metrics": context_free,
+                                "context_k": None,
+                                **row,
+                            }
+                        )
+            if context_dependent:
+                rows = []
+                for k in normalized_ks:
+                    for pred in predictions:
+                        row = _prediction_to_ragas_row(pred, context_k=k)
+                        row["__metric_suffix"] = f"@{k}"
+                        rows.append(row)
+                        if input_dump_path is not None:
+                            dump_records.append(
+                                {
+                                    "ragas_run": f"context_at_{k}",
+                                    "ragas_metrics": context_dependent,
+                                    "context_k": k,
+                                    **_strip_internal_ragas_fields(row),
+                                }
+                            )
+                prepared_batches.append(
+                    (
+                        "context_dependent_by_k",
+                        context_dependent,
+                        rows,
+                    )
+                )
 
-        if not prepared_specs:
+        if not prepared_batches:
             return {}, pd.DataFrame()
 
         if input_dump_path is not None:
@@ -386,58 +556,17 @@ def compute_ragas_metrics(
             else None
         )
 
-        long_rows = []
-        for label, metric_names, context_k, rows in prepared_specs:
-            metrics = [metric_lookup[name] for name in metric_names]
-            metric_labels = {
-                name: f"{name}@{context_k}"
-                if context_k is not None and name in CONTEXT_DEPENDENT_RAGAS_METRICS
-                else name
-                for name in metric_names
-            }
-            logger.info(f"Running RAGAS ({label}) with metrics: {[m.name for m in metrics]}")
-            ds = Dataset.from_list(rows)
-            evaluate_kwargs = {
-                "metrics": metrics,
-                "llm": judge_llm,
-                "embeddings": embeddings,
-                "raise_exceptions": False,
-            }
-            if run_config is not None:
-                evaluate_kwargs["run_config"] = run_config
-            result = evaluate(ds, **evaluate_kwargs)
-            df = result.to_pandas()
-            df["query_id"] = [row["query_id"] for row in rows]
-
-            result_cols: dict[str, str] = {}
-            df_columns = list(df.columns)
-            for requested_name, metric in zip(metric_names, metrics, strict=True):
-                metric_name = getattr(metric, "name", requested_name)
-                result_col = _find_metric_result_column(df_columns, requested_name, metric_name)
-                if result_col is None:
-                    logger.warning(
-                        f"RAGAS result missing column for metric '{requested_name}'. "
-                        f"Available columns: {df_columns}"
-                    )
-                    continue
-                result_cols[result_col] = metric_labels.get(requested_name, requested_name)
-
-            for _, row in df.iterrows():
-                for col, label in result_cols.items():
-                    value = row[col]
-                    try:
-                        score = float(value)
-                    except Exception:
-                        continue
-                    if pd.isna(score):
-                        continue
-                    long_rows.append(
-                        {
-                            "query_id": row["query_id"],
-                            "metric": label,
-                            "value": score,
-                        }
-                    )
+        long_rows = asyncio.run(
+            _evaluate_ragas_batches(
+                batches=prepared_batches,
+                metric_lookup=metric_lookup,
+                dataset_cls=Dataset,
+                aevaluate_fn=aevaluate,
+                judge_llm=judge_llm,
+                embeddings=embeddings,
+                run_config=run_config,
+            )
+        )
 
         pq = pd.DataFrame(long_rows)
         if pq.empty:

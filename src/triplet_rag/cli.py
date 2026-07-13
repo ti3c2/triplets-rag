@@ -355,8 +355,8 @@ def eval_ragas_cmd(
         False,
         "--dump-inputs",
         help="Dump the rows fed to ragas.evaluate as JSONL under "
-        "metrics/ragas/<tag>/inputs/. One file per scope "
-        "(context_free.jsonl, k5.jsonl, …).",
+        "metrics/ragas/<tag>/inputs/. Default single-evaluate mode writes "
+        "ragas_inputs.jsonl.",
     ),
     ks: Optional[str] = typer.Option(
         None,
@@ -365,6 +365,12 @@ def eval_ragas_cmd(
         "context-dependent RAGAS metrics (e.g. '5,10,20'). "
         "Default: auto-derive from the experiment's metrics.retrieval_metrics "
         "@k suffixes; pass '' to force a single un-suffixed pass.",
+    ),
+    separate_scopes: bool = typer.Option(
+        False,
+        "--separate-scopes",
+        help="Run context-free and context-dependent RAGAS scopes separately. "
+        "Default is one whole-set RAGAS call for better worker utilization.",
     ),
 ) -> None:
     """Run RAGAS on a completed experiment's predictions.
@@ -422,6 +428,9 @@ def eval_ragas_cmd(
         console.print(f"[bold]RunConfig:[/bold] max_workers={max_workers}, timeout={timeout}")
     if debug:
         console.print("[yellow]debug=True (judge prompts will be printed)[/yellow]")
+    console.print(
+        f"[bold]RAGAS mode:[/bold] {'separate scopes' if separate_scopes else 'single whole-set evaluate'}"
+    )
 
     try:
         agg, out_dir = run_ragas_on_experiment(
@@ -437,6 +446,7 @@ def eval_ragas_cmd(
             debug=debug,
             dump_inputs=dump_inputs,
             ks=ks_list,
+            single_evaluate=not separate_scopes,
         )
     except FileExistsError as e:
         typer.echo(str(e), err=True)

@@ -7,6 +7,7 @@ ManagedLLM / ManagedEmbedder) and torn down before the next phase.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -164,12 +165,14 @@ def phase_generate_questions(cfg: ExperimentConfig, paths: _PathSet, force: bool
     if question_gen_concurrency is not None:
         logger.info(f"[phase: generate_questions] concurrency={question_gen_concurrency}")
     with ManagedLLM(cfg.generator, lifecycle_log=lifecycle_log) as teacher:
-        questions = generate_questions(
-            chunks,
-            teacher,
-            cfg.generator,
-            cfg.preprocessing,
-            concurrency=question_gen_concurrency,
+        questions = asyncio.run(
+            generate_questions(
+                chunks,
+                teacher,
+                cfg.generator,
+                cfg.preprocessing,
+                concurrency=question_gen_concurrency,
+            )
         )
     write_parquet(questions, paths.questions_path)
     touch_success(_phase_success(paths.art_dir, "questions"), {"n_questions": len(questions)})
@@ -243,34 +246,38 @@ def phase_build_triplets(cfg: ExperimentConfig, paths: _PathSet, force: bool) ->
     )
     if has_seed_answers:
         logger.info("[phase: triplets] using seed answers from generated questions")
-        triplets = build_triplets(
-            questions,
-            chunks,
-            chunk_index,
-            q_emb,
-            teacher=None,
-            teacher_cfg=cfg.generator,
-            contexts_per_question=cfg.budget.per_triplet_contexts,
-            answer_prompt=cfg.preprocessing.answer_prompt,
-        )
-    else:
-        logger.info("[phase: triplets] missing seed answers; falling back to generator answers")
-        with ManagedLLM(cfg.generator, lifecycle_log=lifecycle_log) as teacher:
-            triplets = build_triplets(
+        triplets = asyncio.run(
+            build_triplets(
                 questions,
                 chunks,
                 chunk_index,
                 q_emb,
-                teacher=teacher,
+                teacher=None,
                 teacher_cfg=cfg.generator,
                 contexts_per_question=cfg.budget.per_triplet_contexts,
                 answer_prompt=cfg.preprocessing.answer_prompt,
+            )
+        )
+    else:
+        logger.info("[phase: triplets] missing seed answers; falling back to generator answers")
+        with ManagedLLM(cfg.generator, lifecycle_log=lifecycle_log) as teacher:
+            triplets = asyncio.run(
+                build_triplets(
+                    questions,
+                    chunks,
+                    chunk_index,
+                    q_emb,
+                    teacher=teacher,
+                    teacher_cfg=cfg.generator,
+                    contexts_per_question=cfg.budget.per_triplet_contexts,
+                    answer_prompt=cfg.preprocessing.answer_prompt,
+                )
             )
 
     if cfg.filtering.enabled:
         judge_cfg = cfg.filtering.judge_model or cfg.generator
         with ManagedLLM(judge_cfg, lifecycle_log=lifecycle_log) as judge:
-            triplets = filter_triplets(triplets, cfg.filtering, judge)
+            triplets = asyncio.run(filter_triplets(triplets, cfg.filtering, judge))
 
     write_parquet(triplets, paths.triplets_path)
     touch_success(
@@ -386,6 +393,8 @@ def phase_compute_metrics(cfg: ExperimentConfig, paths: _PathSet, force: bool) -
 
 
 def run_experiment(cfg: ExperimentConfig, force: bool = False) -> Path:
+    if force:
+        cfg = cfg.model_copy(update={"created_at": datetime.utcnow().isoformat() + "Z"})
     s = get_settings()
     paths = _PathSet.from_cfg(cfg)
 

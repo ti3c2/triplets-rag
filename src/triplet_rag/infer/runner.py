@@ -4,20 +4,19 @@ the chosen strategy, writing predictions.jsonl.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from loguru import logger
 
-from ..config import ExperimentConfig, InferenceStrategy
-from ..index.store import IndexBundle, load_bundle
+from ..config import ExperimentConfig
+from ..index.store import IndexBundle
 from ..models import EmbedderClient, LLMClient
 from ..retrieve.retriever import retrieve
 from ..settings import get_settings
-from ..utils.io import append_jsonl, write_jsonl
-from .strategies import run_inference_for_query
+from ..utils.io import write_jsonl
+from .strategies import arun_inference_for_query
 
 
 def run_inference(
@@ -82,14 +81,13 @@ def run_inference(
     # Build the per-query inputs
     queries_dict = queries.set_index("query_id").to_dict(orient="index")
 
-    # Run student calls (concurrent for remote APIs; sequential is fine for retrieval_only)
-    predictions = []
-    is_retrieval_only = cfg.inference.strategy == InferenceStrategy.RETRIEVAL_ONLY
+    # Run student calls. Remote model fanout uses async I/O bounded by llm_concurrency.
+    # Retrieval-only also uses this path, but does not perform model calls.
 
-    def _run_one(idx: int):
+    async def _run_one_async(idx: int):
         qid = query_ids[idx]
         meta = queries_dict[qid]
-        return run_inference_for_query(
+        return await arun_inference_for_query(
             query=meta["query"],
             query_id=qid,
             gold_answers=list(meta.get("gold_answers", [])) or [meta.get("gold_answer", "") or ""],
@@ -101,21 +99,27 @@ def run_inference(
             fresh_retrieval=fresh_results[idx] if fresh_results else None,
         )
 
-    if is_retrieval_only:
-        for i in range(len(query_ids)):
-            predictions.append(_run_one(i))
-    else:
+    async def _run_all_async() -> list:
         c = s.llm_concurrency
-        with ThreadPoolExecutor(max_workers=c) as ex:
-            futures = {ex.submit(_run_one, i): i for i in range(len(query_ids))}
-            done = 0
-            log_every = max(1, len(query_ids) // 20)
-            for fut in as_completed(futures):
-                pred = fut.result()
-                predictions.append(pred)
-                done += 1
-                if done % log_every == 0:
-                    logger.info(f"inference: {done}/{len(query_ids)}")
+        semaphore = asyncio.Semaphore(c)
+        out = []
+        done = 0
+        log_every = max(1, len(query_ids) // 20)
+
+        async def _bounded(idx: int):
+            async with semaphore:
+                return await _run_one_async(idx)
+
+        tasks = [asyncio.create_task(_bounded(i)) for i in range(len(query_ids))]
+        for task in asyncio.as_completed(tasks):
+            pred = await task
+            out.append(pred)
+            done += 1
+            if done % log_every == 0:
+                logger.info(f"inference: {done}/{len(query_ids)}")
+        return out
+
+    predictions = asyncio.run(_run_all_async())
 
     # Sort to deterministic order then write
     predictions.sort(key=lambda p: p.query_id)

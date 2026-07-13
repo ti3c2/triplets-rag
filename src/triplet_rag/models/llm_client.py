@@ -8,8 +8,8 @@ All calls go through a tenacity-backed retry decorator.
 
 from __future__ import annotations
 
+import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from loguru import logger
@@ -25,11 +25,6 @@ from ..settings import get_settings
 
 
 class LLMError(Exception):
-    pass
-
-
-# Errors we retry on. Network / rate-limit / transient server errors.
-class _Retriable(Exception):
     pass
 
 
@@ -59,7 +54,7 @@ def _retry_predicate(exc: BaseException) -> bool:
 
 
 class LLMClient:
-    """Wraps litellm.completion with retries and a unified interface."""
+    """Wraps litellm async chat completions with retries and a unified interface."""
 
     def __init__(self, cfg: LLMConfig):
         self.cfg = cfg
@@ -92,9 +87,9 @@ class LLMClient:
         else:
             raise ValueError(f"Unknown LLM kind: {cfg.kind}")
 
-    # ----- Sync core call with tenacity retries -----
+    # ----- Async core call with tenacity retries -----
 
-    def chat(
+    async def achat(
         self,
         messages: list[dict[str, str]],
         *,
@@ -103,7 +98,7 @@ class LLMClient:
         response_format: dict[str, Any] | None = None,
     ) -> str:
         """Single completion. Returns the assistant message content."""
-        from litellm import completion
+        from litellm import acompletion
 
         kwargs: dict[str, Any] = {
             "model": self._model_str,
@@ -133,22 +128,20 @@ class LLMClient:
             before_sleep=before_sleep_log(logger, "WARNING"),
             reraise=True,
         )
-        def _call() -> str:
+        async def _call() -> str:
             t0 = time.time()
-            resp = completion(**kwargs)
+            resp = await acompletion(**kwargs)
             content = resp["choices"][0]["message"]["content"] or ""
             elapsed = time.time() - t0
             logger.debug(f"chat[{self._model_str}] {elapsed * 1000:.0f}ms")
             return content
 
         try:
-            return _call()
+            return await _call()
         except Exception as e:
             raise LLMError(f"LLM call failed for {self._model_str}: {e}") from e
 
-    # ----- Concurrent batch -----
-
-    def chat_many(
+    async def chat_many_async(
         self,
         prompts: list[list[dict[str, str]]],
         *,
@@ -156,26 +149,28 @@ class LLMClient:
         progress: str = "",
         **kwargs: Any,
     ) -> list[str]:
-        """Run many chat calls concurrently using a thread pool."""
-        from concurrent.futures import as_completed
-
+        """Run many chat calls concurrently using async I/O."""
         n = len(prompts)
         c = concurrency or self.settings.llm_concurrency
         if n == 0:
             return []
+
+        semaphore = asyncio.Semaphore(c)
         results: list[str | None] = [None] * n
-        with ThreadPoolExecutor(max_workers=c) as ex:
-            futures = {ex.submit(self.chat, p, **kwargs): i for i, p in enumerate(prompts)}
-            done = 0
-            log_every = max(1, n // 20)
-            for fut in as_completed(futures):
-                i = futures[fut]
+        done = 0
+        log_every = max(1, n // 20)
+
+        async def _run_one(i: int, prompt: list[dict[str, str]]) -> None:
+            nonlocal done
+            async with semaphore:
                 try:
-                    results[i] = fut.result()
+                    results[i] = await self.achat(prompt, **kwargs)
                 except Exception as e:
                     logger.error(f"chat_many[{i}] failed: {e}")
                     results[i] = ""
                 done += 1
                 if progress and done % log_every == 0:
                     logger.info(f"{progress}: {done}/{n}")
+
+        await asyncio.gather(*(_run_one(i, p) for i, p in enumerate(prompts)))
         return [r or "" for r in results]

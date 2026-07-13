@@ -16,9 +16,8 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-from ..config import FilteringConfig, LLMConfig
+from ..config import FilteringConfig
 from ..models import LLMClient
-
 
 _JUDGE_PROMPT = """You are a strict factuality judge. Given a question, a list of contexts, and an answer, decide whether every claim in the answer is supported by the contexts.
 
@@ -37,7 +36,7 @@ Answer: {answer}
 JSON:"""
 
 
-def _score_with_judge(
+async def _score_with_judge(
     triplets: pd.DataFrame,
     judge: LLMClient,
     *,
@@ -56,7 +55,7 @@ def _score_with_judge(
                 }
             ]
         )
-    raw = judge.chat_many(prompts, concurrency=concurrency, progress="filter_judge")
+    raw = await judge.chat_many_async(prompts, concurrency=concurrency, progress="filter_judge")
     scores: list[float] = []
     for r in raw:
         try:
@@ -75,7 +74,7 @@ def _score_with_judge(
     return scores
 
 
-def filter_triplets(
+async def filter_triplets(
     triplets: pd.DataFrame,
     cfg: FilteringConfig,
     judge: LLMClient | None,
@@ -90,7 +89,7 @@ def filter_triplets(
         return triplets
 
     logger.info(f"Filtering {len(triplets)} triplets with threshold={cfg.faithfulness_threshold}")
-    scores = _score_with_judge(triplets, judge, concurrency=concurrency)
+    scores = await _score_with_judge(triplets, judge, concurrency=concurrency)
     triplets = triplets.copy()
     triplets["faithfulness_score"] = scores
     triplets["kept"] = [s >= cfg.faithfulness_threshold for s in scores]

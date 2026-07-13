@@ -10,12 +10,10 @@ are left untouched.
 
 from __future__ import annotations
 
-import copy
 import re
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
 from loguru import logger
 
 from ..config import LLMConfig, MetricsConfig
@@ -83,76 +81,6 @@ def _partition_metric_names(
     return cf, cd, unknown
 
 
-def _truncate_contexts(predictions: list[dict], k: int | None) -> list[dict]:
-    """Return shallow-copied predictions with `retrieved_texts` cut to top-k.
-
-    `k=None` returns predictions with their `retrieved_texts` set to `[]` —
-    used for the context-free pass to make it explicit that contexts aren't
-    consulted.
-    """
-    out = []
-    for pred in predictions:
-        new = copy.copy(pred)
-        if k is None:
-            new["retrieved_texts"] = []
-        else:
-            new["retrieved_texts"] = list(pred.get("retrieved_texts", []) or [])[:k]
-        out.append(new)
-    return out
-
-
-def _run_one_pass(
-    *,
-    predictions: list[dict],
-    judge_cfg: LLMConfig,
-    metric_names: list[str],
-    bootstrap_n: int,
-    bootstrap_seed: int,
-    judge_base_url: str | None,
-    judge_api_key: str | None,
-    max_workers: int | None,
-    timeout: int | None,
-    debug: bool,
-    dump_path: Path | None,
-    suffix: str,
-) -> tuple[dict[str, float], pd.DataFrame]:
-    """One RAGAS call, optionally suffixing metric names with `@k`."""
-    cfg = MetricsConfig(
-        retrieval_metrics=[],
-        generation_lexical=[],
-        use_ragas=True,
-        ragas_metrics=metric_names,
-        judge_model=judge_cfg,
-        bootstrap_n=bootstrap_n,
-        bootstrap_seed=bootstrap_seed,
-    )
-    # Conditionally pass new kwargs so tests stubbing `compute_ragas_metrics`
-    # with the narrow legacy signature keep working.
-    extra: dict = {}
-    if max_workers is not None:
-        extra["max_workers"] = max_workers
-    if timeout is not None:
-        extra["timeout"] = timeout
-    if debug:
-        extra["debug"] = True
-    if dump_path is not None:
-        extra["dump_path"] = dump_path
-
-    agg, pq = compute_ragas_metrics(
-        predictions,
-        cfg,
-        judge_base_url=judge_base_url,
-        judge_api_key=judge_api_key,
-        **extra,
-    )
-    if suffix:
-        agg = {f"{k}{suffix}": v for k, v in agg.items()}
-        if not pq.empty and "metric" in pq.columns:
-            pq = pq.copy()
-            pq["metric"] = pq["metric"].astype(str) + suffix
-    return agg, pq
-
-
 def run_ragas_on_experiment(
     *,
     exp_dir: Path,
@@ -169,6 +97,7 @@ def run_ragas_on_experiment(
     debug: bool = False,
     dump_inputs: bool = False,
     ks: list[int] | None = None,
+    single_evaluate: bool = True,
 ) -> tuple[dict[str, float], Path]:
     """Run RAGAS over `exp_dir/predictions.jsonl` and persist results.
 
@@ -176,13 +105,13 @@ def run_ragas_on_experiment(
     call only. Use them to point a vllm-kind judge at a self-hosted endpoint
     (e.g. http://localhost:7114/v1) without mutating env vars.
 
-    Per-k partitioning: context-dependent metrics (faithfulness, context_*,
+    Per-k evaluation: context-dependent metrics (faithfulness, context_*,
     nv_response_groundedness, nv_context_relevance) are replicated for each k
     in `ks` with truncated contexts; results are suffixed `<metric>@<k>`.
-    Context-free metrics (answer_relevancy, answer_correctness, nv_accuracy)
-    are run exactly once. `ks=None` auto-derives from
+    By default, all requested metrics and prepared rows are evaluated in one
+    RAGAS call so RAGAS can keep its worker queue full. `ks=None` auto-derives from
     `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`; passing `ks=[]`
-    explicitly disables per-k and reproduces the legacy single-pass behavior.
+    explicitly disables per-k.
 
     Returns the aggregate dict and the output directory.
     """
@@ -223,76 +152,36 @@ def run_ragas_on_experiment(
         f"RAGAS rerun on {pred_path.name} with judge {judge_cfg.kind}:"
         f"{judge_cfg.model_name}{endpoint_note} (tag={tag}); "
         f"metrics={metric_names}; ks={resolved_ks or 'single-pass'}; "
-        f"max_workers={max_workers}; timeout={timeout}; debug={debug}"
+        f"max_workers={max_workers}; timeout={timeout}; debug={debug}; "
+        f"single_evaluate={single_evaluate}"
     )
 
     inputs_dir = out_dir / "inputs" if dump_inputs else None
 
-    judge_agg: dict[str, float] = {}
-    judge_pqs: list[pd.DataFrame] = []
-
-    if cf_metrics:
-        agg, pq = _run_one_pass(
-            predictions=_truncate_contexts(predictions, k=None),
-            judge_cfg=judge_cfg,
-            metric_names=cf_metrics,
-            bootstrap_n=bootstrap_n,
-            bootstrap_seed=bootstrap_seed,
-            judge_base_url=judge_base_url,
-            judge_api_key=judge_api_key,
-            max_workers=max_workers,
-            timeout=timeout,
-            debug=debug,
-            dump_path=(inputs_dir / "context_free.jsonl") if inputs_dir else None,
-            suffix="",
-        )
-        judge_agg.update(agg)
-        if not pq.empty:
-            judge_pqs.append(pq)
-
-    if cd_metrics:
-        if resolved_ks:
-            for k in resolved_ks:
-                agg, pq = _run_one_pass(
-                    predictions=_truncate_contexts(predictions, k=k),
-                    judge_cfg=judge_cfg,
-                    metric_names=cd_metrics,
-                    bootstrap_n=bootstrap_n,
-                    bootstrap_seed=bootstrap_seed,
-                    judge_base_url=judge_base_url,
-                    judge_api_key=judge_api_key,
-                    max_workers=max_workers,
-                    timeout=timeout,
-                    debug=debug,
-                    dump_path=(inputs_dir / f"k{k}.jsonl") if inputs_dir else None,
-                    suffix=f"@{k}",
-                )
-                judge_agg.update(agg)
-                if not pq.empty:
-                    judge_pqs.append(pq)
-        else:
-            agg, pq = _run_one_pass(
-                predictions=predictions,
-                judge_cfg=judge_cfg,
-                metric_names=cd_metrics,
-                bootstrap_n=bootstrap_n,
-                bootstrap_seed=bootstrap_seed,
-                judge_base_url=judge_base_url,
-                judge_api_key=judge_api_key,
-                max_workers=max_workers,
-                timeout=timeout,
-                debug=debug,
-                dump_path=(inputs_dir / "context_dependent.jsonl") if inputs_dir else None,
-                suffix="",
-            )
-            judge_agg.update(agg)
-            if not pq.empty:
-                judge_pqs.append(pq)
+    cfg = MetricsConfig(
+        retrieval_metrics=[],
+        generation_lexical=[],
+        use_ragas=True,
+        ragas_metrics=metric_names,
+        judge_model=judge_cfg,
+        bootstrap_n=bootstrap_n,
+        bootstrap_seed=bootstrap_seed,
+    )
+    judge_agg, combined_pq = compute_ragas_metrics(
+        predictions,
+        cfg,
+        judge_base_url=judge_base_url,
+        judge_api_key=judge_api_key,
+        context_ks=resolved_ks,
+        max_workers=max_workers,
+        timeout=timeout,
+        debug=debug,
+        dump_path=(inputs_dir / "ragas_inputs.jsonl") if inputs_dir else None,
+        single_evaluate=single_evaluate,
+    )
 
     if not judge_agg:
         raise RuntimeError("RAGAS returned no metrics — check the logs above for errors")
-
-    combined_pq = pd.concat(judge_pqs, ignore_index=True) if judge_pqs else pd.DataFrame()
 
     aggregate_and_persist(
         out_dir=out_dir,
@@ -315,6 +204,7 @@ def run_ragas_on_experiment(
             "timeout": timeout,
             "debug": debug,
             "dump_inputs": dump_inputs,
+            "single_evaluate": single_evaluate,
             "n_queries": len(predictions),
             "ran_at": datetime.utcnow().isoformat() + "Z",
         },

@@ -22,7 +22,7 @@ from ..prompts import answer_gen_key, render
 from ..utils.hashing import stable_hash_str
 
 
-def build_triplets(
+async def build_triplets(
     questions: pd.DataFrame,
     chunks: pd.DataFrame,
     chunk_index: IndexBundle,
@@ -78,7 +78,7 @@ def build_triplets(
                 logger.info(
                     f"{len(missing)} questions have empty seed_answer; falling back to teacher"
                 )
-                fallback = _answer_with_teacher(
+                fallback = await _answer_with_teacher(
                     questions.iloc[missing],
                     retrieved_chunk_texts=[retrieved_chunk_texts[idx] for idx in missing],
                     teacher=teacher,
@@ -93,7 +93,7 @@ def build_triplets(
                 "questions table has no usable seed_answer column and no teacher was provided"
             )
         logger.info("No seed_answer column found; falling back to teacher answer generation")
-        answers = _answer_with_teacher(
+        answers = await _answer_with_teacher(
             questions,
             retrieved_chunk_texts=retrieved_chunk_texts,
             teacher=teacher,
@@ -129,7 +129,7 @@ def build_triplets(
     return df
 
 
-def _answer_with_teacher(
+async def _answer_with_teacher(
     questions: pd.DataFrame,
     *,
     retrieved_chunk_texts: list[list[str]],
@@ -142,7 +142,7 @@ def _answer_with_teacher(
     for q_text, ctxs in zip(questions["question"].values, retrieved_chunk_texts, strict=True):
         msg = render(prompt_key, question=q_text, contexts=ctxs)
         prompts.append([{"role": "user", "content": msg}])
-    return teacher.chat_many(
+    return await teacher.chat_many_async(
         prompts,
         concurrency=concurrency,
         progress="build_triplets",

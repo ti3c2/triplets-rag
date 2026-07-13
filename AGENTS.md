@@ -60,6 +60,10 @@ Hydra composes configs from groups under `configs/` (`dataset`, `chunking`, `gen
 
 `ManagedLLM` / `ManagedEmbedder` (`src/triplet_rag/models/manager.py`) are context managers that spin up only what each phase needs and tear it down before the next, so multi-model runs don't OOM the GPU. For OpenAI/Anthropic this is a thin client; for `kind=local_hf` it spawns a vLLM subprocess on a configurable port, polls `/health`, and SIGTERMs (with SIGKILL fallback) on exit. Lifecycle events go to `experiments/<id>/logs/model_lifecycle.log`. All LLM calls flow through `tenacity` retries with a custom predicate (retry on rate-limit / timeout / transient 5xx; give up on auth/param errors).
 
+Remote model and judge fanout must be async-first. Use async clients (`LLMClient.achat`, `LLMClient.chat_many_async`, RAGAS `aevaluate`) with explicit concurrency limits rather than `ThreadPoolExecutor` over sync APIs.
+
+Backward compatibility is not a default requirement in this repo. When changing internal APIs, configs, artifact schemas, or CLI behavior, prefer the clean current design and remove obsolete compatibility paths unless the user explicitly asks to preserve backward compatibility.
+
 ### Strategy axes (the experimental space)
 
 Indexing strategies (`src/triplet_rag/index/strategies.py`): `chunks_only` (vanilla baseline), `questions_only` (extreme QuOTE), `chunks_and_questions` (full QuOTE; deduped by chunk_id at query time), `triplets` (the proposed approach), `qa_pairs` (ablation).
