@@ -342,7 +342,8 @@ def eval_ragas_cmd(
     max_workers: int | None = typer.Option(
         None,
         "--max-workers",
-        help="Parallel RAGAS workers (ragas RunConfig.max_workers). Default: ragas built-in (16).",
+        help="Concurrent RAGAS metric workers and judge-request ceiling. "
+        "Default: TRIPLET_RAG_LLM_CONCURRENCY.",
     ),
     timeout: int | None = typer.Option(
         None,
@@ -421,11 +422,17 @@ def eval_ragas_cmd(
     console.print(f"[bold]Metrics:[/bold] {metric_names}")
     if ks_list is not None:
         console.print(f"[bold]ks (override):[/bold] {ks_list or 'single-pass'}")
-    if max_workers is not None or timeout is not None:
-        console.print(f"[bold]RunConfig:[/bold] max_workers={max_workers}, timeout={timeout}")
+    effective_workers = max_workers if max_workers is not None else s.llm_concurrency
+    worker_source = "CLI" if max_workers is not None else "TRIPLET_RAG_LLM_CONCURRENCY"
+    console.print(
+        f"[bold]Concurrency:[/bold] {effective_workers} "
+        f"judge requests / RAGAS workers ({worker_source})"
+    )
+    if timeout is not None:
+        console.print(f"[bold]Timeout:[/bold] {timeout}s")
     if debug:
         console.print("[yellow]debug=True (judge prompts will be printed)[/yellow]")
-    console.print("[bold]RAGAS mode:[/bold] judge-backed metrics isolated")
+    console.print("[bold]RAGAS mode:[/bold] continuously scheduled judge scopes")
 
     try:
         agg, out_dir = run_ragas_on_experiment(

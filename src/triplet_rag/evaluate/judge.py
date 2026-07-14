@@ -8,6 +8,7 @@ judges because multiple judge models can coexist under one experiment.
 from __future__ import annotations
 
 import asyncio
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,7 @@ def _build_ragas_judge_llm(
     *,
     base_url_override: str | None = None,
     api_key_override: str | None = None,
+    max_concurrency: int | None = None,
 ) -> Any:
     """Build a langchain-compatible LLM for RAGAS to use as judge.
 
@@ -97,9 +99,11 @@ def _build_ragas_judge_llm(
     """
     if judge_cfg is None:
         return None
+    if max_concurrency is not None and max_concurrency < 1:
+        raise ValueError("max_concurrency must be >= 1")
 
     from langchain_openai import ChatOpenAI
-    from ragas.llms import LangchainLLMWrapper
+    from ragas.llms.base import LangchainLLMWrapper
 
     s = get_settings()
     if judge_cfg.kind == "openai":
@@ -126,7 +130,62 @@ def _build_ragas_judge_llm(
         )
     else:
         raise ValueError(f"Unsupported judge kind for ragas: {judge_cfg.kind}")
-    return LangchainLLMWrapper(chat)
+    return _concurrency_limited_langchain_wrapper(
+        LangchainLLMWrapper,
+        chat,
+        max_concurrency=max_concurrency,
+    )
+
+
+def _concurrency_limited_langchain_wrapper(
+    wrapper_cls: Any,
+    langchain_llm: Any,
+    *,
+    max_concurrency: int | None,
+) -> Any:
+    """Build a RAGAS wrapper with one shared limit around actual LLM requests.
+
+    RAGAS limits whole metric coroutines, not individual generations. A metric
+    can parse one response and prepare another while occupying a worker slot.
+    This request-level semaphore lets multiple RAGAS evaluations keep work
+    queued without exceeding the configured judge concurrency.
+    """
+    if max_concurrency is None:
+        return wrapper_cls(langchain_llm)
+    request_limit = int(max_concurrency)
+
+    class _ConcurrencyLimitedWrapper(wrapper_cls):
+        def __init__(self, llm: Any) -> None:
+            super().__init__(llm)
+            self._request_semaphore = asyncio.Semaphore(request_limit)
+            self._request_active = 0
+            self._request_peak = 0
+            self._request_total = 0
+            self._request_limit = request_limit
+
+        async def agenerate_text(self, *args: Any, **kwargs: Any) -> Any:
+            self._request_total += 1
+            async with self._request_semaphore:
+                self._request_active += 1
+                self._request_peak = max(self._request_peak, self._request_active)
+                try:
+                    # LangchainLLMWrapper temporarily mutates temperature and n.
+                    # Give each request its own shallow wrapper/model copy so
+                    # concurrent metrics cannot race on those values.
+                    request_wrapper = copy.copy(self)
+                    if hasattr(self.langchain_llm, "model_copy"):
+                        request_wrapper.langchain_llm = self.langchain_llm.model_copy()
+                    else:
+                        request_wrapper.langchain_llm = copy.copy(self.langchain_llm)
+                    return await wrapper_cls.agenerate_text(
+                        request_wrapper,
+                        *args,
+                        **kwargs,
+                    )
+                finally:
+                    self._request_active -= 1
+
+    return _ConcurrencyLimitedWrapper(langchain_llm)
 
 
 def _build_ragas_embeddings() -> Any:
@@ -193,6 +252,14 @@ def _build_run_config(max_workers: int | None, timeout: int | None) -> Any:
     if timeout is not None:
         kwargs["timeout"] = int(timeout)
     return RunConfig(**kwargs)
+
+
+def resolve_ragas_max_workers(max_workers: int | None) -> int:
+    """Resolve RAGAS concurrency, using the repo-wide LLM limit by default."""
+    resolved = get_settings().llm_concurrency if max_workers is None else int(max_workers)
+    if resolved < 1:
+        raise ValueError("max_workers must be >= 1")
+    return resolved
 
 
 def _make_ragas_metric(name: str) -> Any:
@@ -338,6 +405,8 @@ async def _evaluate_ragas_call(
         "llm": judge_llm,
         "embeddings": embeddings,
         "raise_exceptions": False,
+        # RAGAS batches are drain barriers, not GPU inference batches.
+        "batch_size": None,
     }
     if run_config is not None:
         evaluate_kwargs["run_config"] = run_config
@@ -394,25 +463,48 @@ async def _evaluate_ragas_calls(
     embeddings: Any,
     run_config: Any,
 ) -> list[dict[str, Any]]:
-    logger.info(
-        f"Running {len(calls)} RAGAS aevaluate call(s) sequentially "
-        "(judge-backed metrics are isolated from local metrics)"
-    )
-    long_rows: list[dict[str, Any]] = []
-    for label, metric_names, rows in calls:
-        long_rows.extend(
-            await _evaluate_ragas_call(
-                label=label,
-                metric_names=metric_names,
-                rows=rows,
-                dataset_cls=dataset_cls,
-                aevaluate_fn=aevaluate_fn,
-                judge_llm=judge_llm,
-                embeddings=embeddings,
-                run_config=run_config,
+    judge_calls = [call for call in calls if any(name in REMOTE_RAGAS_METRICS for name in call[1])]
+    local_calls = [
+        call for call in calls if not any(name in REMOTE_RAGAS_METRICS for name in call[1])
+    ]
+
+    async def _run_group(
+        group: list[tuple[str, list[str], list[dict[str, Any]]]],
+    ) -> list[list[dict[str, Any]]]:
+        return await asyncio.gather(
+            *(
+                _evaluate_ragas_call(
+                    label=label,
+                    metric_names=metric_names,
+                    rows=rows,
+                    dataset_cls=dataset_cls,
+                    aevaluate_fn=aevaluate_fn,
+                    judge_llm=judge_llm,
+                    embeddings=embeddings,
+                    run_config=run_config,
+                )
+                for label, metric_names, rows in group
             )
         )
-    return long_rows
+
+    results: list[list[dict[str, Any]]] = []
+    if local_calls:
+        logger.info(f"Running {len(local_calls)} local RAGAS call(s) before judge work")
+        results.extend(await _run_group(local_calls))
+    if judge_calls:
+        logger.info(
+            f"Running {len(judge_calls)} judge-backed RAGAS call(s) concurrently "
+            "with a shared request limit"
+        )
+        results.extend(await _run_group(judge_calls))
+    if hasattr(judge_llm, "_request_peak"):
+        logger.info(
+            "RAGAS judge requests: "
+            f"total={judge_llm._request_total}, "
+            f"peak_concurrency={judge_llm._request_peak}/"
+            f"{judge_llm._request_limit}"
+        )
+    return [row for result in results for row in result]
 
 
 def compute_ragas_metrics(
@@ -434,8 +526,7 @@ def compute_ragas_metrics(
     """
     if not cfg.use_ragas or not cfg.ragas_metrics:
         return {}, pd.DataFrame()
-    if max_workers is not None and max_workers < 1:
-        raise ValueError("max_workers must be >= 1")
+    effective_max_workers = resolve_ragas_max_workers(max_workers)
     if timeout is not None and timeout < 1:
         raise ValueError("timeout must be >= 1")
     if input_dump_path is None and dump_path is not None:
@@ -446,7 +537,7 @@ def compute_ragas_metrics(
         from datasets import Dataset
         from ragas import aevaluate
 
-        run_config = _build_run_config(max_workers, timeout)
+        run_config = _build_run_config(effective_max_workers, timeout)
     except Exception as e:
         logger.warning(f"RAGAS unavailable: {e}; skipping LLM-as-judge metrics")
         if restore_debug is not None and previous_debug is not None:
@@ -542,9 +633,14 @@ def compute_ragas_metrics(
                 cfg.judge_model,
                 base_url_override=judge_base_url,
                 api_key_override=judge_api_key,
+                max_concurrency=effective_max_workers,
             )
             if any(name in LLM_RAGAS_METRICS for name in requested_names)
             else None
+        )
+        logger.info(
+            f"RAGAS concurrency={effective_max_workers} "
+            "(metric workers and global judge-request limit); batching=disabled"
         )
         embeddings = (
             _build_ragas_embeddings()

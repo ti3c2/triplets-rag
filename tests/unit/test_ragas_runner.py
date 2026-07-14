@@ -99,6 +99,34 @@ def test_layout_one_judge(tmp_path, monkeypatch):
     assert agg == {"faithfulness": 0.85, "answer_relevancy": 0.85}
 
 
+def test_default_concurrency_is_resolved_and_persisted(tmp_path, monkeypatch):
+    exp = tmp_path / "exp_concurrency"
+    exp.mkdir()
+    _make_predictions(exp)
+    captured = {}
+
+    def _fake(predictions, cfg, **kwargs):
+        captured["max_workers"] = kwargs["max_workers"]
+        rows = [
+            {"query_id": p["query_id"], "metric": "faithfulness", "value": 0.5} for p in predictions
+        ]
+        return {"faithfulness": 0.5}, pd.DataFrame(rows)
+
+    monkeypatch.setattr(ragas_runner, "compute_ragas_metrics", _fake)
+    monkeypatch.setattr(ragas_runner, "resolve_ragas_max_workers", lambda value: 37)
+
+    _, out_dir = ragas_runner.run_ragas_on_experiment(
+        exp_dir=exp,
+        judge_cfg=LLMConfig(kind="openai", model_name="gpt-4o"),
+        metric_names=["faithfulness"],
+    )
+
+    metadata = read_json(out_dir / "judge.json")
+    assert captured["max_workers"] == 37
+    assert metadata["max_workers"] == 37
+    assert metadata["max_workers_source"] == "TRIPLET_RAG_LLM_CONCURRENCY"
+
+
 def test_two_judges_coexist(tmp_path, monkeypatch):
     exp = tmp_path / "exp2"
     exp.mkdir()

@@ -23,6 +23,7 @@ from .judge import (
     CONTEXT_DEPENDENT_METRICS,
     CONTEXT_FREE_METRICS,
     compute_ragas_metrics,
+    resolve_ragas_max_workers,
 )
 
 
@@ -108,12 +109,13 @@ def run_ragas_on_experiment(
     nv_response_groundedness, nv_context_relevance) are replicated for each k
     in `ks` with truncated contexts; results are suffixed `<metric>@<k>`.
     A single k uses one RAGAS call for judge-backed metrics and, when requested,
-    one additional local-metric call so local/string metrics do not consume
-    judge worker slots. With multiple k values, context-free metrics run once
-    and context-dependent rows for all k values are merged into one additional
-    sequential RAGAS call so we do not recompute answer-only metrics. `ks=None`
-    auto-derives from `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`;
-    passing `ks=[]` explicitly disables per-k.
+    one additional local-metric call. With multiple k values, context-free
+    metrics run once and context-dependent rows for all k values are merged into
+    one additional call so we do not recompute answer-only metrics. Independent
+    judge-backed calls run concurrently behind one shared request limit, after
+    local metrics finish. `ks=None` auto-derives from
+    `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`; passing `ks=[]`
+    explicitly disables per-k.
 
     Returns the aggregate dict and the output directory.
     """
@@ -148,13 +150,16 @@ def run_ragas_on_experiment(
     # Per-k is only meaningful when we actually have context-dependent metrics.
     if not cd_metrics:
         resolved_ks = []
+    effective_max_workers = resolve_ragas_max_workers(max_workers)
+    max_workers_source = "argument" if max_workers is not None else "TRIPLET_RAG_LLM_CONCURRENCY"
 
     endpoint_note = f" @ {judge_base_url}" if judge_base_url else ""
     logger.info(
         f"RAGAS rerun on {pred_path.name} with judge {judge_cfg.kind}:"
         f"{judge_cfg.model_name}{endpoint_note} (tag={tag}); "
         f"metrics={metric_names}; ks={resolved_ks or 'single-pass'}; "
-        f"max_workers={max_workers}; timeout={timeout}; debug={debug}"
+        f"max_workers={effective_max_workers} ({max_workers_source}); "
+        f"timeout={timeout}; debug={debug}"
     )
 
     inputs_dir = out_dir / "inputs" if dump_inputs else None
@@ -174,7 +179,7 @@ def run_ragas_on_experiment(
         judge_base_url=judge_base_url,
         judge_api_key=judge_api_key,
         context_ks=resolved_ks,
-        max_workers=max_workers,
+        max_workers=effective_max_workers,
         timeout=timeout,
         debug=debug,
         dump_path=(inputs_dir / "ragas_inputs.jsonl") if inputs_dir else None,
@@ -200,7 +205,8 @@ def run_ragas_on_experiment(
             "ks": resolved_ks,
             "context_free_metrics": cf_metrics,
             "context_dependent_metrics": cd_metrics,
-            "max_workers": max_workers,
+            "max_workers": effective_max_workers,
+            "max_workers_source": max_workers_source,
             "timeout": timeout,
             "debug": debug,
             "dump_inputs": dump_inputs,
