@@ -94,6 +94,7 @@ def run_ragas_on_experiment(
     bootstrap_seed: int = 12345,
     force: bool = False,
     max_workers: int | None = None,
+    max_queries: int | None = None,
     timeout: int | None = None,
     debug: bool = False,
     dump_inputs: bool = False,
@@ -108,12 +109,11 @@ def run_ragas_on_experiment(
     Per-k evaluation: context-dependent metrics (faithfulness, context_*,
     nv_response_groundedness, nv_context_relevance) are replicated for each k
     in `ks` with truncated contexts; results are suffixed `<metric>@<k>`.
-    A single k uses one RAGAS call for judge-backed metrics and, when requested,
-    one additional local-metric call. With multiple k values, context-free
-    metrics run once and context-dependent rows for all k values are merged into
-    one additional call so we do not recompute answer-only metrics. Independent
-    judge-backed calls run concurrently behind one shared request limit, after
-    local metrics finish. `ks=None` auto-derives from
+    A single k uses one RAGAS call for all requested metrics. With multiple k
+    values, context-free metrics run once and context-dependent rows for all k
+    values are merged into one additional sequential call so answer-only metrics
+    are not recomputed. Each call uses the same `RunConfig.max_workers` value.
+    `ks=None` auto-derives from
     `<exp_dir>/config.yaml.json`'s `metrics.retrieval_metrics`; passing `ks=[]`
     explicitly disables per-k.
 
@@ -135,6 +135,11 @@ def run_ragas_on_experiment(
     predictions = list(read_jsonl(pred_path))
     if not predictions:
         raise ValueError(f"predictions.jsonl is empty at {pred_path}")
+    total_predictions = len(predictions)
+    if max_queries is not None:
+        if max_queries < 1:
+            raise ValueError("max_queries must be >= 1")
+        predictions = predictions[:max_queries]
 
     cf_metrics, cd_metrics, unknown = _partition_metric_names(metric_names)
     if unknown:
@@ -158,6 +163,7 @@ def run_ragas_on_experiment(
         f"RAGAS rerun on {pred_path.name} with judge {judge_cfg.kind}:"
         f"{judge_cfg.model_name}{endpoint_note} (tag={tag}); "
         f"metrics={metric_names}; ks={resolved_ks or 'single-pass'}; "
+        f"queries={len(predictions)}/{total_predictions}; "
         f"max_workers={effective_max_workers} ({max_workers_source}); "
         f"timeout={timeout}; debug={debug}"
     )
@@ -207,6 +213,8 @@ def run_ragas_on_experiment(
             "context_dependent_metrics": cd_metrics,
             "max_workers": effective_max_workers,
             "max_workers_source": max_workers_source,
+            "max_queries": max_queries,
+            "n_queries_total": total_predictions,
             "timeout": timeout,
             "debug": debug,
             "dump_inputs": dump_inputs,

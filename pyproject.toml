@@ -28,7 +28,7 @@ dependencies = [
     "torch>=2.2",
     # Evaluation
     "ir-measures>=0.3.3",
-    "ragas>=0.1.10",
+    "ragas==0.3.2",
     "evaluate>=0.4",
     "rouge-score>=0.1.2",
     "nltk>=3.8",

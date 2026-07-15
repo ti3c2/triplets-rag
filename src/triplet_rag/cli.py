@@ -342,8 +342,13 @@ def eval_ragas_cmd(
     max_workers: int | None = typer.Option(
         None,
         "--max-workers",
-        help="Concurrent RAGAS metric workers and judge-request ceiling. "
+        help="Concurrent RAGAS metric workers. "
         "Default: TRIPLET_RAG_LLM_CONCURRENCY.",
+    ),
+    max_queries: int | None = typer.Option(
+        None,
+        "--max-queries",
+        help="Evaluate only the first N predictions. Default: evaluate all predictions.",
     ),
     timeout: int | None = typer.Option(
         None,
@@ -416,23 +421,29 @@ def eval_ragas_cmd(
                 typer.echo(f"--ks: '{piece}' is not an integer", err=True)
                 raise typer.Exit(2) from None
 
+    effective_workers = max_workers if max_workers is not None else s.llm_concurrency
+    if effective_workers < 1:
+        typer.echo("--max-workers must be at least 1", err=True)
+        raise typer.Exit(2)
+    if max_queries is not None and max_queries < 1:
+        typer.echo("--max-queries must be at least 1", err=True)
+        raise typer.Exit(2)
+
     endpoint_str = f" @ {base_url}" if base_url else ""
     console.print(f"[bold]Experiment:[/bold] {exp_dir.name}")
     console.print(f"[bold]Judge:[/bold] {kind}:{model_name}{endpoint_str} (tag={tag})")
     console.print(f"[bold]Metrics:[/bold] {metric_names}")
     if ks_list is not None:
         console.print(f"[bold]ks (override):[/bold] {ks_list or 'single-pass'}")
-    effective_workers = max_workers if max_workers is not None else s.llm_concurrency
     worker_source = "CLI" if max_workers is not None else "TRIPLET_RAG_LLM_CONCURRENCY"
-    console.print(
-        f"[bold]Concurrency:[/bold] {effective_workers} "
-        f"judge requests / RAGAS workers ({worker_source})"
-    )
+    console.print(f"[bold]RAGAS max workers:[/bold] {effective_workers} ({worker_source})")
+    if max_queries is not None:
+        console.print(f"[bold]Max queries:[/bold] {max_queries}")
     if timeout is not None:
         console.print(f"[bold]Timeout:[/bold] {timeout}s")
     if debug:
         console.print("[yellow]debug=True (judge prompts will be printed)[/yellow]")
-    console.print("[bold]RAGAS mode:[/bold] continuously scheduled judge scopes")
+    console.print("[bold]RAGAS mode:[/bold] ragas 0.3.2 evaluate(), batching disabled")
 
     try:
         agg, out_dir = run_ragas_on_experiment(
@@ -444,6 +455,7 @@ def eval_ragas_cmd(
             judge_api_key=api_key,
             force=force,
             max_workers=max_workers,
+            max_queries=max_queries,
             timeout=timeout,
             debug=debug,
             dump_inputs=dump_inputs,

@@ -161,12 +161,12 @@ Three layers, each chosen to answer a different research question.
 
 The judge model is configured separately from teacher and student to avoid self-favoritism. Default: `gpt-4o`.
 
-Standalone judge runs use async RAGAS scopes with one shared request limit. The
-default is `TRIPLET_RAG_LLM_CONCURRENCY`; override it for one run with
-`triplet-rag eval-ragas ... --max-workers N`. RAGAS batching is intentionally
-disabled so completed metric work is replaced immediately instead of waiting
-for a whole batch to drain. Evaluation logs report total judge requests and
-peak request concurrency, and `judge.json` records the effective worker count.
+Standalone judge runs are pinned to RAGAS 0.3.2 and use its `evaluate()` executor,
+matching the known high-throughput evaluation path. `--max-workers N` is passed
+directly to `RunConfig.max_workers` (default `TRIPLET_RAG_LLM_CONCURRENCY`), and
+batching is disabled. Use `--max-queries N` for a bounded evaluation sample.
+Logs report the estimated judge-call count, and `judge.json` records the effective
+worker and query counts.
 
 **Aggregation** — every metric is computed per-query (`metrics/per_query.parquet`, long format) and aggregated with 1000-iteration bootstrap 95% confidence intervals (`metrics/aggregate.json`). Differences between methods are usually small, so CIs matter.
 

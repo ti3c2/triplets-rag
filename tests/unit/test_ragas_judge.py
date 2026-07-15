@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import sys
 import types
 from types import SimpleNamespace
 
 import pandas as pd
 
-from triplet_rag.config import MetricsConfig
+from triplet_rag.config import LLMConfig, MetricsConfig
 from triplet_rag.evaluate import judge
 from triplet_rag.utils.io import read_jsonl
 
@@ -30,10 +29,7 @@ class _FakeRunConfig:
         self.kwargs = kwargs
 
 
-def _install_fake_ragas(monkeypatch, calls, *, delay: float = 0.0, active=None):
-    datasets_mod = types.ModuleType("datasets")
-    datasets_mod.Dataset = _FakeDataset
-
+def _install_fake_ragas(monkeypatch, calls):
     metrics_mod = types.ModuleType("ragas.metrics")
     metrics_mod.faithfulness = _FakeMetric("faithfulness")
     metrics_mod.answer_relevancy = _FakeMetric("answer_relevancy")
@@ -135,7 +131,7 @@ def _install_fake_ragas(monkeypatch, calls, *, delay: float = 0.0, active=None):
 
     ragas_mod = types.ModuleType("ragas")
 
-    async def aevaluate(
+    def evaluate(
         dataset,
         metrics,
         llm,
@@ -144,31 +140,22 @@ def _install_fake_ragas(monkeypatch, calls, *, delay: float = 0.0, active=None):
         run_config=None,
         batch_size=None,
     ):
-        if active is not None:
-            active["current"] += 1
-            active["max"] = max(active["max"], active["current"])
-        try:
-            calls.append(
-                {
-                    "rows": list(dataset),
-                    "metrics": [m.name for m in metrics],
-                    "run_config": run_config,
-                    "batch_size": batch_size,
-                }
-            )
-            if delay:
-                await asyncio.sleep(delay)
-            data = {"query_id": [row["query_id"] for row in dataset]}
-            for metric in metrics:
-                data[metric.name] = [0.5 for _ in dataset]
-            return SimpleNamespace(to_pandas=lambda: pd.DataFrame(data))
-        finally:
-            if active is not None:
-                active["current"] -= 1
+        calls.append(
+            {
+                "rows": list(dataset),
+                "metrics": [m.name for m in metrics],
+                "run_config": run_config,
+                "batch_size": batch_size,
+            }
+        )
+        data = {"query_id": [row["query_id"] for row in dataset]}
+        for metric in metrics:
+            data[metric.name] = [0.5 for _ in dataset]
+        return SimpleNamespace(to_pandas=lambda: pd.DataFrame(data))
 
-    ragas_mod.aevaluate = aevaluate
+    ragas_mod.evaluate = evaluate
+    ragas_mod.EvaluationDataset = _FakeDataset
 
-    monkeypatch.setitem(sys.modules, "datasets", datasets_mod)
     monkeypatch.setitem(sys.modules, "ragas", ragas_mod)
     monkeypatch.setitem(sys.modules, "ragas.metrics", metrics_mod)
     monkeypatch.setitem(sys.modules, "ragas.metrics._faithfulness", faithfulness_mod)
@@ -197,82 +184,23 @@ def test_find_metric_result_column_handles_parameterized_ragas_columns():
     assert judge._find_metric_result_column(columns, "missing", "missing") is None
 
 
-def test_concurrency_limited_wrapper_caps_actual_requests():
-    active = {"current": 0, "max": 0}
-
-    class _FakeLLM:
-        def model_copy(self):
-            return self
-
-    class _FakeWrapper:
-        def __init__(self, llm):
-            self.langchain_llm = llm
-
-        async def agenerate_text(self, *_args, **_kwargs):
-            active["current"] += 1
-            active["max"] = max(active["max"], active["current"])
-            try:
-                await asyncio.sleep(0.01)
-                return "ok"
-            finally:
-                active["current"] -= 1
-
-    wrapped = judge._concurrency_limited_langchain_wrapper(
-        _FakeWrapper,
-        _FakeLLM(),
-        max_concurrency=2,
+def test_build_ragas_judge_honors_generation_limits(monkeypatch):
+    monkeypatch.setattr(
+        judge,
+        "get_settings",
+        lambda: SimpleNamespace(vllm_api_key="EMPTY", vllm_base_url="http://localhost:8000/v1"),
+    )
+    cfg = LLMConfig(
+        kind="vllm",
+        model_name="local-judge",
+        max_tokens=77,
+        top_p=0.8,
     )
 
-    async def _run_requests():
-        return await asyncio.gather(*(wrapped.agenerate_text(str(i)) for i in range(6)))
+    wrapped = judge._build_ragas_judge_llm(cfg)
 
-    results = asyncio.run(_run_requests())
-
-    assert results == ["ok"] * 6
-    assert active["max"] == 2
-    assert wrapped._request_peak == 2
-    assert wrapped._request_total == 6
-
-
-def test_concurrency_limited_ragas_wrapper_does_not_mutate_shared_model():
-    from ragas.llms.base import LangchainLLMWrapper
-
-    seen = []
-
-    class _FakeLangchainLLM:
-        def __init__(self):
-            self.temperature = 0.0
-            self.n = 1
-
-        def model_copy(self):
-            copied = _FakeLangchainLLM()
-            copied.temperature = self.temperature
-            copied.n = self.n
-            return copied
-
-        async def agenerate_prompt(self, prompts, **_kwargs):
-            seen.append((self.temperature, self.n, prompts))
-            await asyncio.sleep(0.001)
-            return SimpleNamespace(generations=[[SimpleNamespace(text="ok")]])
-
-    model = _FakeLangchainLLM()
-    wrapped = judge._concurrency_limited_langchain_wrapper(
-        LangchainLLMWrapper,
-        model,
-        max_concurrency=2,
-    )
-
-    async def _run_requests():
-        return await asyncio.gather(
-            wrapped.agenerate_text("one", n=2, temperature=0.1),
-            wrapped.agenerate_text("two", n=3, temperature=0.2),
-        )
-
-    asyncio.run(_run_requests())
-
-    assert model.temperature == 0.0
-    assert model.n == 1
-    assert {(temperature, n) for temperature, n, _ in seen} == {(0.1, 2), (0.2, 3)}
+    assert wrapped.langchain_llm._default_params["max_completion_tokens"] == 77
+    assert wrapped.langchain_llm._default_params["top_p"] == 0.8
 
 
 def test_resolve_ragas_max_workers_uses_llm_setting(monkeypatch):
@@ -348,8 +276,7 @@ def test_compute_ragas_metrics_runs_context_metrics_per_k(tmp_path, monkeypatch)
 
 def test_compute_ragas_metrics_uses_one_evaluate_for_single_k(monkeypatch):
     calls = []
-    active = {"current": 0, "max": 0}
-    _install_fake_ragas(monkeypatch, calls, delay=0.01, active=active)
+    _install_fake_ragas(monkeypatch, calls)
     monkeypatch.setattr(judge, "_build_ragas_judge_llm", lambda *args, **kwargs: None)
     monkeypatch.setattr(judge, "_build_ragas_embeddings", lambda: None)
 
@@ -373,13 +300,11 @@ def test_compute_ragas_metrics_uses_one_evaluate_for_single_k(monkeypatch):
     assert set(agg) == {"answer_correctness", "faithfulness@1"}
     assert [call["metrics"] for call in calls] == [["faithfulness", "answer_correctness"]]
     assert calls[0]["rows"][0]["retrieved_contexts"] == ["c1"]
-    assert active["max"] == 1
 
 
-def test_compute_ragas_metrics_runs_partitioned_scopes_concurrently(monkeypatch):
+def test_compute_ragas_metrics_runs_partitioned_scopes_sequentially(monkeypatch):
     calls = []
-    active = {"current": 0, "max": 0}
-    _install_fake_ragas(monkeypatch, calls, delay=0.01, active=active)
+    _install_fake_ragas(monkeypatch, calls)
     monkeypatch.setattr(judge, "_build_ragas_judge_llm", lambda *args, **kwargs: None)
     monkeypatch.setattr(judge, "_build_ragas_embeddings", lambda: None)
 
@@ -403,7 +328,6 @@ def test_compute_ragas_metrics_runs_partitioned_scopes_concurrently(monkeypatch)
     assert set(agg) == {"answer_correctness", "faithfulness@1", "faithfulness@2"}
     assert [call["metrics"] for call in calls] == [["answer_correctness"], ["faithfulness"]]
     assert [call["run_config"].max_workers for call in calls] == [1, 1]
-    assert active["max"] == 2
 
 
 def test_compute_ragas_metrics_supports_reference_metric_names(monkeypatch):
@@ -435,13 +359,4 @@ def test_compute_ragas_metrics_supports_reference_metric_names(monkeypatch):
 
     assert set(agg) == set(metric_names)
     assert set(per_query["metric"].unique()) == set(metric_names)
-    assert [call["metrics"] for call in calls] == [
-        [
-            "rouge_score",
-            "bleu_score",
-            "non_llm_string_similarity",
-            "string_present",
-            "exact_match",
-        ],
-        ["factual_correctness"],
-    ]
+    assert [call["metrics"] for call in calls] == [metric_names]
