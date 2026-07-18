@@ -77,7 +77,7 @@ def retrieve_dense(
     distances, indices = search(bundle, query_embeddings, over_k)
 
     id_map = bundle.id_map
-    type_value = id_map["item_type"].iloc[0] if len(id_map) else "chunk"
+    id_map["item_type"].iloc[0] if len(id_map) else "chunk"
 
     # Build chunk-id -> text lookup if we have triplets-as-rows and need their contexts
     chunk_text_lookup: dict[str, str] = {}
@@ -87,7 +87,7 @@ def retrieve_dense(
     results: list[RetrievalResult] = []
     for q_idx, qid in enumerate(query_ids):
         items: list[RetrievedItem] = []
-        for rank, (rowid_arr, score_arr) in enumerate(
+        for _rank, (rowid_arr, score_arr) in enumerate(
             zip(indices[q_idx], distances[q_idx], strict=True)
         ):
             r = int(rowid_arr)
@@ -188,7 +188,7 @@ def retrieve_triplet_chunk_mediated(
     for q_idx, qid in enumerate(query_ids):
         seen_triplets: set[str] = set()
         items: list[RetrievedItem] = []
-        for rank, (rowid_arr, score_arr) in enumerate(
+        for _rank, (rowid_arr, score_arr) in enumerate(
             zip(indices[q_idx], distances[q_idx], strict=True)
         ):
             r = int(rowid_arr)

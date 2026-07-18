@@ -161,6 +161,12 @@ Three layers, each chosen to answer a different research question.
 
 The judge model is configured separately from teacher and student to avoid self-favoritism. Default: `gpt-4o`.
 
+Standalone judge runs are pinned to RAGAS 0.3.2 and use its `evaluate()` executor,
+matching the known high-throughput evaluation path. `--max-workers N` is passed
+directly to `RunConfig.max_workers` (default `TRIPLET_RAG_LLM_CONCURRENCY`), and
+batching is disabled. Use `--max-queries N` for a bounded evaluation sample.
+`judge.json` records the effective worker and query counts.
+
 **Aggregation** — every metric is computed per-query (`metrics/per_query.parquet`, long format) and aggregated with 1000-iteration bootstrap 95% confidence intervals (`metrics/aggregate.json`). Differences between methods are usually small, so CIs matter.
 
 ## Models and lifecycle

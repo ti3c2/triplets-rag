@@ -1,9 +1,7 @@
-"""Layout-only test for the RAGAS rerunner.
+"""Tests for the standalone RAGAS rerunner.
 
-`compute_ragas_metrics` is stubbed out — the test verifies that
-`run_ragas_on_experiment` reads predictions, writes the per-judge subfolder
-exactly where we expect, and that two different judge tags coexist without
-overwriting each other.
+`compute_ragas_metrics` is stubbed so these tests focus on input selection,
+configuration forwarding, and persisted output metadata.
 """
 
 from __future__ import annotations
@@ -51,7 +49,7 @@ def _make_predictions(exp_dir: Path) -> None:
 
 
 def _stub_compute(monkeypatch, value: float) -> None:
-    def _fake(predictions, cfg, *, judge_base_url=None, judge_api_key=None):
+    def _fake(predictions, cfg, **_kwargs):
         rows = []
         agg = {}
         for m in cfg.ragas_metrics:
@@ -86,6 +84,61 @@ def test_layout_one_judge(tmp_path, monkeypatch):
     aggregate = read_json(out_dir / "aggregate.json")
     assert "faithfulness" in aggregate and "answer_relevancy" in aggregate
     assert agg == {"faithfulness": 0.85, "answer_relevancy": 0.85}
+
+
+def test_default_concurrency_is_resolved_and_persisted(tmp_path, monkeypatch):
+    exp = tmp_path / "exp_concurrency"
+    exp.mkdir()
+    _make_predictions(exp)
+    captured = {}
+
+    def _fake(predictions, cfg, **kwargs):
+        captured["max_workers"] = kwargs["max_workers"]
+        rows = [
+            {"query_id": p["query_id"], "metric": "faithfulness", "value": 0.5} for p in predictions
+        ]
+        return {"faithfulness": 0.5}, pd.DataFrame(rows)
+
+    monkeypatch.setattr(ragas_runner, "compute_ragas_metrics", _fake)
+    monkeypatch.setattr(ragas_runner, "resolve_ragas_max_workers", lambda value: 37)
+
+    _, out_dir = ragas_runner.run_ragas_on_experiment(
+        exp_dir=exp,
+        judge_cfg=LLMConfig(kind="openai", model_name="gpt-4o"),
+        metric_names=["faithfulness"],
+    )
+
+    metadata = read_json(out_dir / "judge.json")
+    assert captured["max_workers"] == 37
+    assert metadata["max_workers"] == 37
+    assert metadata["max_workers_source"] == "TRIPLET_RAG_LLM_CONCURRENCY"
+
+
+def test_max_queries_limits_predictions_and_is_persisted(tmp_path, monkeypatch):
+    exp = tmp_path / "exp_query_limit"
+    exp.mkdir()
+    _make_predictions(exp)
+    captured = {}
+
+    def _fake(predictions, cfg, **kwargs):
+        captured["query_ids"] = [prediction["query_id"] for prediction in predictions]
+        rows = [{"query_id": predictions[0]["query_id"], "metric": "faithfulness", "value": 0.5}]
+        return {"faithfulness": 0.5}, pd.DataFrame(rows)
+
+    monkeypatch.setattr(ragas_runner, "compute_ragas_metrics", _fake)
+
+    _, out_dir = ragas_runner.run_ragas_on_experiment(
+        exp_dir=exp,
+        judge_cfg=LLMConfig(kind="openai", model_name="gpt-4o"),
+        metric_names=["faithfulness"],
+        max_queries=1,
+    )
+
+    metadata = read_json(out_dir / "judge.json")
+    assert captured["query_ids"] == ["q1"]
+    assert metadata["max_queries"] == 1
+    assert metadata["n_queries"] == 1
+    assert metadata["n_queries_total"] == 2
 
 
 def test_two_judges_coexist(tmp_path, monkeypatch):
@@ -167,9 +220,9 @@ def test_base_url_threaded_through(tmp_path, monkeypatch):
 
     captured = {}
 
-    def _fake(predictions, cfg, *, judge_base_url=None, judge_api_key=None):
-        captured["base_url"] = judge_base_url
-        captured["api_key"] = judge_api_key
+    def _fake(predictions, cfg, **kwargs):
+        captured["base_url"] = kwargs["judge_base_url"]
+        captured["api_key"] = kwargs["judge_api_key"]
         captured["judge_kind"] = cfg.judge_model.kind if cfg.judge_model else None
         captured["judge_model"] = cfg.judge_model.model_name if cfg.judge_model else None
         rows = [

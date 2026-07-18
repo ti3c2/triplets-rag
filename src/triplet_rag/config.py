@@ -15,7 +15,7 @@ Layered hashes:
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
@@ -68,7 +68,7 @@ class ChunkingConfig(_Frozen):
 # ---------- Models ----------
 
 
-class ModelKind(str, Enum):
+class ModelKind(StrEnum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     VLLM = "vllm"  # local OpenAI-compatible server
@@ -107,7 +107,7 @@ class EmbedderConfig(_Frozen):
 # ---------- Index / retrieval ----------
 
 
-class IndexingStrategy(str, Enum):
+class IndexingStrategy(StrEnum):
     CHUNKS_ONLY = "chunks_only"  # vanilla
     QUESTIONS_ONLY = "questions_only"  # extreme QuOTE
     CHUNKS_AND_QUESTIONS = "chunks_and_questions"  # full QuOTE
@@ -115,7 +115,7 @@ class IndexingStrategy(str, Enum):
     QA_PAIRS = "qa_pairs"  # ablation: drop contexts, keep Q+A
 
 
-class TripletRetrievalMode(str, Enum):
+class TripletRetrievalMode(StrEnum):
     Q2Q = "q2q"
     CHUNK_MEDIATED = "chunk_mediated"
 
@@ -139,7 +139,7 @@ class RetrieverConfig(_Frozen):
 # ---------- Inference ----------
 
 
-class InferenceStrategy(str, Enum):
+class InferenceStrategy(StrEnum):
     RETRIEVAL_ONLY = "retrieval_only"  # no LLM call; for retrieval metrics
     VANILLA_RAG = "vanilla_rag"  # query + retrieved chunks
     TRIPLET_RAG = "triplet_rag"  # query + retrieved triplets as demos
@@ -228,9 +228,7 @@ def _hashable_payload(value: Any) -> Any:
         return _hashable_payload(value.model_dump())
     if isinstance(value, dict):
         return {
-            key: _hashable_payload(item)
-            for key, item in value.items()
-            if key not in {"base_url"}
+            key: _hashable_payload(item) for key, item in value.items() if key not in {"base_url"}
         }
     if isinstance(value, list):
         return [_hashable_payload(item) for item in value]

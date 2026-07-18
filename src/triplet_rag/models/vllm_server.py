@@ -13,7 +13,6 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Optional
 
 import httpx
 from loguru import logger
@@ -23,7 +22,7 @@ from ..settings import get_settings
 
 
 class VLLMServer:
-    def __init__(self, cfg: LLMConfig, port: Optional[int] = None):
+    def __init__(self, cfg: LLMConfig, port: int | None = None):
         if cfg.kind != "local_hf":
             raise ValueError("VLLMServer is only for kind='local_hf'")
         self.cfg = cfg

@@ -9,10 +9,6 @@ Verifies:
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from triplet_rag.config import (
     BudgetConfig,
     ChunkingConfig,
@@ -182,13 +178,12 @@ def test_resumes_when_predictions_exist(stub_llm_chat, stub_embedder, _isolated_
     """
     from triplet_rag.experiment.runner import (
         _PathSet,
+        phase_build_chunk_only_index,
+        phase_build_index,
         phase_chunk,
-        phase_compute_metrics,
         phase_embed,
         phase_ingest,
         phase_run_inference,
-        phase_build_chunk_only_index,
-        phase_build_index,
     )
 
     cfg = _vanilla_cfg(name="fixture_resume")

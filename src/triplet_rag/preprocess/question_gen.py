@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
 
 import pandas as pd
 from loguru import logger
@@ -34,7 +33,7 @@ def _parse_qa_lines(text: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def generate_questions(
+async def generate_questions(
     chunks: pd.DataFrame,
     teacher: LLMClient,
     teacher_cfg: LLMConfig,
@@ -56,7 +55,9 @@ def generate_questions(
         text = render(prompt_key, n=pp.num_questions_per_chunk, chunk_text=ch["text"])
         prompts.append([{"role": "user", "content": text}])
 
-    raw = teacher.chat_many(prompts, concurrency=concurrency, progress="generate_questions")
+    raw = await teacher.chat_many_async(
+        prompts, concurrency=concurrency, progress="generate_questions"
+    )
 
     rows = []
     for ch_row, response in zip(chunks.itertuples(index=False), raw, strict=True):

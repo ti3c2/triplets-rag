@@ -9,8 +9,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from loguru import logger
-
 from ..config import BudgetConfig, InferenceConfig, InferenceStrategy
 from ..data.schemas import Prediction
 from ..models import LLMClient
@@ -96,58 +94,44 @@ def _build_qa_demo_prompt(
     )
 
 
-def run_inference_for_query(
+def _fresh_contexts(
+    inference_cfg: InferenceConfig,
+    fresh_retrieval: RetrievalResult | None,
+    budget: BudgetConfig,
+) -> list[str] | None:
+    if inference_cfg.include_fresh_contexts and fresh_retrieval is not None:
+        return [it.text for it in fresh_retrieval.items[: budget.total_context_items]]
+    return None
+
+
+def _build_prompt_for_query(
     *,
     query: str,
-    query_id: str,
-    gold_answers: list[str],
-    gold_doc_ids: list[str],
-    retrieval: RetrievalResult,
+    items: list[RetrievedItem],
     inference_cfg: InferenceConfig,
     budget: BudgetConfig,
-    student: LLMClient | None,
-    fresh_retrieval: RetrievalResult | None = None,
-) -> Prediction:
-    items = retrieval.items
-    fresh_contexts: list[str] | None = None
-    if inference_cfg.include_fresh_contexts and fresh_retrieval is not None:
-        fresh_contexts = [it.text for it in fresh_retrieval.items[: budget.total_context_items]]
-
-    triplet_ids: list[str] = []
+    fresh_contexts: list[str] | None,
+) -> tuple[str, list[str]]:
     if inference_cfg.strategy == InferenceStrategy.RETRIEVAL_ONLY:
-        prompt = ""
-        prediction = ""
-        latency_ms = 0.0
-    elif inference_cfg.strategy == InferenceStrategy.VANILLA_RAG:
-        prompt = _build_vanilla_prompt(query, items, budget)
-        if student is None:
-            raise ValueError("student LLM required for vanilla_rag")
-        t0 = time.time()
-        prediction = student.chat([{"role": "user", "content": prompt}])
-        latency_ms = (time.time() - t0) * 1000
-    elif inference_cfg.strategy == InferenceStrategy.TRIPLET_RAG:
-        prompt, used_triplets = _build_triplet_prompt(query, items, budget, fresh_contexts)
+        return "", []
+    if inference_cfg.strategy == InferenceStrategy.VANILLA_RAG:
+        return _build_vanilla_prompt(query, items, budget), []
+    if inference_cfg.strategy == InferenceStrategy.TRIPLET_RAG:
+        prompt, _ = _build_triplet_prompt(query, items, budget, fresh_contexts)
         triplet_ids = [it.item_id for it in items if it.item_type == "triplet"][
             : budget.num_triplets
         ]
-        if student is None:
-            raise ValueError("student LLM required for triplet_rag")
-        t0 = time.time()
-        prediction = student.chat([{"role": "user", "content": prompt}])
-        latency_ms = (time.time() - t0) * 1000
-    elif inference_cfg.strategy == InferenceStrategy.QA_DEMO_RAG:
+        return prompt, triplet_ids
+    if inference_cfg.strategy == InferenceStrategy.QA_DEMO_RAG:
         prompt = _build_qa_demo_prompt(query, items, budget, fresh_contexts)
         triplet_ids = [it.item_id for it in items if it.item_type == "triplet"][
             : budget.num_triplets
         ]
-        if student is None:
-            raise ValueError("student LLM required for qa_demo_rag")
-        t0 = time.time()
-        prediction = student.chat([{"role": "user", "content": prompt}])
-        latency_ms = (time.time() - t0) * 1000
-    else:
-        raise ValueError(f"Unknown strategy: {inference_cfg.strategy}")
+        return prompt, triplet_ids
+    raise ValueError(f"Unknown strategy: {inference_cfg.strategy}")
 
+
+def _retrieval_evidence(items: list[RetrievedItem]) -> tuple[list[str], list[str]]:
     # retrieved_ids: which docs were retrieved (for retrieval metrics)
     retrieved_ids: list[str] = []
     retrieved_texts: list[str] = []
@@ -168,11 +152,27 @@ def run_inference_for_query(
         elif it.item_type == "qa_pair":
             retrieved_ids.append(it.item_id)
             retrieved_texts.append(it.text)
+    return retrieved_ids, retrieved_texts
 
+
+def _prediction_record(
+    *,
+    query: str,
+    query_id: str,
+    gold_answers: list[str],
+    gold_doc_ids: list[str],
+    strategy: str,
+    retrieved_ids: list[str],
+    retrieved_texts: list[str],
+    triplet_ids: list[str],
+    prompt: str,
+    prediction: str,
+    latency_ms: float,
+) -> Prediction:
     return Prediction(
         query_id=query_id,
         query=query,
-        strategy=inference_cfg.strategy.value,
+        strategy=strategy,
         retrieved_ids=retrieved_ids,
         retrieved_texts=retrieved_texts,
         retrieved_triplet_ids=triplet_ids,
@@ -180,5 +180,52 @@ def run_inference_for_query(
         prediction=prediction.strip(),
         gold_answers=gold_answers,
         gold_doc_ids=gold_doc_ids,
+        latency_ms=latency_ms,
+    )
+
+
+async def arun_inference_for_query(
+    *,
+    query: str,
+    query_id: str,
+    gold_answers: list[str],
+    gold_doc_ids: list[str],
+    retrieval: RetrievalResult,
+    inference_cfg: InferenceConfig,
+    budget: BudgetConfig,
+    student: LLMClient | None,
+    fresh_retrieval: RetrievalResult | None = None,
+) -> Prediction:
+    items = retrieval.items
+    fresh_contexts = _fresh_contexts(inference_cfg, fresh_retrieval, budget)
+    prompt, triplet_ids = _build_prompt_for_query(
+        query=query,
+        items=items,
+        inference_cfg=inference_cfg,
+        budget=budget,
+        fresh_contexts=fresh_contexts,
+    )
+    if inference_cfg.strategy == InferenceStrategy.RETRIEVAL_ONLY:
+        prediction = ""
+        latency_ms = 0.0
+    else:
+        if student is None:
+            raise ValueError(f"student LLM required for {inference_cfg.strategy.value}")
+        t0 = time.time()
+        prediction = await student.achat([{"role": "user", "content": prompt}])
+        latency_ms = (time.time() - t0) * 1000
+
+    retrieved_ids, retrieved_texts = _retrieval_evidence(items)
+    return _prediction_record(
+        query=query,
+        query_id=query_id,
+        gold_answers=gold_answers,
+        gold_doc_ids=gold_doc_ids,
+        strategy=inference_cfg.strategy.value,
+        retrieved_ids=retrieved_ids,
+        retrieved_texts=retrieved_texts,
+        triplet_ids=triplet_ids,
+        prompt=prompt,
+        prediction=prediction,
         latency_ms=latency_ms,
     )

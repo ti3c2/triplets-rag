@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-import tempfile
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -68,7 +64,11 @@ def stub_llm_chat(monkeypatch):
             "model": kwargs.get("model"),
         }
 
+    async def _fake_acompletion(**kwargs: Any) -> dict[str, Any]:
+        return _fake_completion(**kwargs)
+
     monkeypatch.setattr("litellm.completion", _fake_completion)
+    monkeypatch.setattr("litellm.acompletion", _fake_acompletion)
     yield _fake_completion
 
 
@@ -80,14 +80,14 @@ def stub_embedder(monkeypatch):
     """
     import hashlib
 
-    DIM = 32
+    dim = 32
 
     class _StubModel:
         def __init__(self, name):
             self.name = name
 
         def get_sentence_embedding_dimension(self) -> int:
-            return DIM
+            return dim
 
         def encode(
             self,
@@ -101,7 +101,7 @@ def stub_embedder(monkeypatch):
             for t in texts:
                 # Hash-based deterministic vector; same text -> same vector
                 h = hashlib.sha256(t.encode("utf-8")).digest()
-                vec = np.frombuffer(h * 8, dtype=np.uint8)[:DIM].astype(np.float32)
+                vec = np.frombuffer(h * 8, dtype=np.uint8)[:dim].astype(np.float32)
                 vec = vec - 128.0
                 if normalize_embeddings:
                     norm = np.linalg.norm(vec) + 1e-12
