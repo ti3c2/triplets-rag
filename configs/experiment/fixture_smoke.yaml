@@ -1,0 +1,36 @@
+# @package _global_
+defaults:
+  - /dataset: fixture
+  - /chunking: small_200_30
+  - /generator: gpt4o_mini
+  - /embedder: minilm
+  - /indexer: faiss_flat_chunks
+  - /retriever: dense_top_k
+  - /student: gpt4o_mini
+  - /inference_strategy: vanilla
+  - /metrics: lexical_only
+  - _self_
+
+experiment_name: fixture_smoke
+seed: 42
+
+budget:
+  total_context_items: 3
+  num_triplets: 1
+  per_triplet_contexts: 2
+  matching_mode: item
+
+preprocessing:
+  num_questions_per_chunk: 2
+  question_prompt: basic
+  answer_prompt: rag_default
+  max_questions_total: null
+  dedupe_questions: true
+  dedupe_threshold: 0.95
+
+filtering:
+  enabled: false
+  faithfulness_threshold: 0.7
+  judge_model: null
+
+notes: "Smoke test on the synthetic fixture corpus"

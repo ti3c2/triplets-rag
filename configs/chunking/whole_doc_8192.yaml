@@ -1,0 +1,8 @@
+# @package chunking
+# "Whole document as a single chunk" — for SQuAD/NQ-style passages this
+# fits comfortably under 8192 chars. Anything longer falls back to a
+# non-overlapping 8192-char window (still a coarse, paragraph-spanning chunk).
+strategy: sliding_window
+chunk_size: 8192
+chunk_overlap: 0
+min_chunk_chars: 50

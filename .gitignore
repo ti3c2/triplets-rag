@@ -1,0 +1,54 @@
+# Project folders
+.ssh
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+.eggs/
+
+# uv
+.uv/
+uv.lock
+
+# Env
+.env
+.env.local
+
+# Storage / artifacts
+storage
+storage/raw/*
+storage/artifacts/*
+storage/indices/*
+storage/experiments/*
+!storage/raw/.gitkeep
+!storage/artifacts/.gitkeep
+!storage/indices/.gitkeep
+!storage/experiments/.gitkeep
+
+# Hydra
+outputs/
+multirun/
+.hydra/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Notebooks
+.ipynb_checkpoints/

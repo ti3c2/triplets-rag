@@ -1,0 +1,46 @@
+# A grid spec for the headline comparison: vanilla vs triplet_rag with two
+# triplet retrieval modes, on SQuAD-1k.
+#
+# Run with:
+#   triplet-rag grid configs/grids/squad_pilot_grid.yaml
+
+base: experiment/squad_vanilla_pilot
+
+sweep:
+  # Baseline: vanilla RAG
+  - experiment_name: squad_vanilla_top10
+    inference.strategy: vanilla_rag
+    indexer.indexing_strategy: chunks_only
+    retriever.top_k: 10
+
+  # QuOTE-style index with vanilla inference
+  - experiment_name: squad_quote_top10
+    inference.strategy: vanilla_rag
+    indexer.indexing_strategy: chunks_and_questions
+    retriever.top_k: 10
+
+  # Triplet-RAG, q2q retrieval
+  - experiment_name: squad_triplet_q2q
+    inference.strategy: triplet_rag
+    indexer.indexing_strategy: triplets
+    retriever.triplet_retrieval_mode: q2q
+    retriever.top_k: 2
+    budget.num_triplets: 2
+    budget.per_triplet_contexts: 5
+
+  # Triplet-RAG, chunk-mediated retrieval
+  - experiment_name: squad_triplet_chunkmed
+    inference.strategy: triplet_rag
+    indexer.indexing_strategy: triplets
+    retriever.triplet_retrieval_mode: chunk_mediated
+    retriever.top_k: 2
+    budget.num_triplets: 2
+    budget.per_triplet_contexts: 5
+
+  # Ablation: QA pairs only (no contexts in demos)
+  - experiment_name: squad_qa_demo
+    inference.strategy: qa_demo_rag
+    indexer.indexing_strategy: triplets
+    retriever.triplet_retrieval_mode: q2q
+    retriever.top_k: 2
+    budget.num_triplets: 2

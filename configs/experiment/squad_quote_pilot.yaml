@@ -1,0 +1,34 @@
+# @package _global_
+defaults:
+  - /dataset: squad_dev_1k
+  - /chunking: sliding_512_64
+  - /generator: gpt4o_mini
+  - /embedder: bge_small
+  - /indexer: faiss_flat_quote
+  - /retriever: dense_top_k
+  - /student: gpt4o_mini
+  - /inference_strategy: vanilla
+  - /metrics: lexical_only
+  - _self_
+
+experiment_name: squad_quote_pilot
+seed: 42
+
+budget:
+  total_context_items: 10
+  num_triplets: 2
+  per_triplet_contexts: 5
+  matching_mode: item
+
+preprocessing:
+  num_questions_per_chunk: 5
+  question_prompt: complex
+  answer_prompt: rag_default
+  max_questions_total: null
+  dedupe_questions: true
+  dedupe_threshold: 0.95
+
+filtering:
+  enabled: false
+
+notes: "QuOTE-style: chunks_and_questions index, vanilla rag inference"

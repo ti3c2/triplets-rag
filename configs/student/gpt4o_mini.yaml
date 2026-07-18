@@ -1,0 +1,6 @@
+# @package student
+kind: openai
+model_name: gpt-4o-mini
+temperature: 0.0
+max_tokens: 256
+top_p: 1.0

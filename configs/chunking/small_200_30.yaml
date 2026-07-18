@@ -1,0 +1,5 @@
+# @package chunking
+strategy: sliding_window
+chunk_size: 200
+chunk_overlap: 30
+min_chunk_chars: 30

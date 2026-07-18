@@ -1,0 +1,5 @@
+# @package retriever
+top_k: 2
+triplet_retrieval_mode: q2q
+over_fetch_factor: 10
+dedupe_by: chunk_id

@@ -1,0 +1,4 @@
+# @package inference
+strategy: qa_demo_rag
+prompt_version: v1
+include_fresh_contexts: true

@@ -1,0 +1,36 @@
+# @package _global_
+defaults:
+  - /dataset: fixture
+  - /chunking: small_200_30
+  - /generator: gpt4o_mini
+  - /embedder: minilm
+  - /indexer: faiss_flat_triplets
+  - /retriever: triplet_top_2
+  - /student: gpt4o_mini
+  - /inference_strategy: triplet
+  - /metrics: lexical_only
+  - _self_
+
+experiment_name: fixture_smoke_triplet
+seed: 42
+
+budget:
+  total_context_items: 4
+  num_triplets: 2
+  per_triplet_contexts: 2
+  matching_mode: item
+
+preprocessing:
+  num_questions_per_chunk: 2
+  question_prompt: basic
+  answer_prompt: rag_default
+  max_questions_total: null
+  dedupe_questions: true
+  dedupe_threshold: 0.95
+
+filtering:
+  enabled: false
+  faithfulness_threshold: 0.7
+  judge_model: null
+
+notes: "Smoke test of triplet_rag on the fixture corpus"
