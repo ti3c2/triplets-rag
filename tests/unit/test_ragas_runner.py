@@ -1,9 +1,7 @@
-"""Layout-only test for the RAGAS rerunner.
+"""Tests for the standalone RAGAS rerunner.
 
-`compute_ragas_metrics` is stubbed out — the test verifies that
-`run_ragas_on_experiment` reads predictions, writes the per-judge subfolder
-exactly where we expect, and that two different judge tags coexist without
-overwriting each other.
+`compute_ragas_metrics` is stubbed so these tests focus on input selection,
+configuration forwarding, and persisted output metadata.
 """
 
 from __future__ import annotations
@@ -51,18 +49,7 @@ def _make_predictions(exp_dir: Path) -> None:
 
 
 def _stub_compute(monkeypatch, value: float) -> None:
-    def _fake(
-        predictions,
-        cfg,
-        *,
-        judge_base_url=None,
-        judge_api_key=None,
-        context_ks=None,
-        max_workers=None,
-        timeout=None,
-        debug=False,
-        dump_path=None,
-    ):
+    def _fake(predictions, cfg, **_kwargs):
         rows = []
         agg = {}
         for m in cfg.ragas_metrics:
@@ -233,20 +220,9 @@ def test_base_url_threaded_through(tmp_path, monkeypatch):
 
     captured = {}
 
-    def _fake(
-        predictions,
-        cfg,
-        *,
-        judge_base_url=None,
-        judge_api_key=None,
-        context_ks=None,
-        max_workers=None,
-        timeout=None,
-        debug=False,
-        dump_path=None,
-    ):
-        captured["base_url"] = judge_base_url
-        captured["api_key"] = judge_api_key
+    def _fake(predictions, cfg, **kwargs):
+        captured["base_url"] = kwargs["judge_base_url"]
+        captured["api_key"] = kwargs["judge_api_key"]
         captured["judge_kind"] = cfg.judge_model.kind if cfg.judge_model else None
         captured["judge_model"] = cfg.judge_model.model_name if cfg.judge_model else None
         rows = [

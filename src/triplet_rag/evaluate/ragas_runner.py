@@ -11,7 +11,7 @@ are left untouched.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
@@ -188,7 +188,7 @@ def run_ragas_on_experiment(
         max_workers=effective_max_workers,
         timeout=timeout,
         debug=debug,
-        dump_path=(inputs_dir / "ragas_inputs.jsonl") if inputs_dir else None,
+        input_dump_path=(inputs_dir / "ragas_inputs.jsonl") if inputs_dir else None,
     )
 
     if not judge_agg:
@@ -219,7 +219,7 @@ def run_ragas_on_experiment(
             "debug": debug,
             "dump_inputs": dump_inputs,
             "n_queries": len(predictions),
-            "ran_at": datetime.utcnow().isoformat() + "Z",
+            "ran_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         },
         out_dir / "judge.json",
     )
@@ -254,6 +254,6 @@ def _update_runs_index(
         "judge_base_url": judge_base_url,
         "metrics": metric_names,
         "ks": ks,
-        "ran_at": datetime.utcnow().isoformat() + "Z",
+        "ran_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     write_json(runs, index_path)

@@ -165,8 +165,7 @@ Standalone judge runs are pinned to RAGAS 0.3.2 and use its `evaluate()` executo
 matching the known high-throughput evaluation path. `--max-workers N` is passed
 directly to `RunConfig.max_workers` (default `TRIPLET_RAG_LLM_CONCURRENCY`), and
 batching is disabled. Use `--max-queries N` for a bounded evaluation sample.
-Logs report the estimated judge-call count, and `judge.json` records the effective
-worker and query counts.
+`judge.json` records the effective worker and query counts.
 
 **Aggregation** — every metric is computed per-query (`metrics/per_query.parquet`, long format) and aggregated with 1000-iteration bootstrap 95% confidence intervals (`metrics/aggregate.json`). Differences between methods are usually small, so CIs matter.
 
